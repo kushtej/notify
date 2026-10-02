@@ -1,69 +1,62 @@
 # Notify 🔔
 
-> A weekend timepass, 100% vibecoded app created to do **one thing and one thing only**: ping me with a notification at the exact minute I asked for. That's literally it.
+> A weekend timepass, vibecoded side project built for **one purpose only**: send me an exact notification when I need it. Zero fluff, zero ads, zero calendar spam.
 
 ---
 
-### Why does this exist? 
+### Why build this?
 
-Look, all I wanted was an app that sends me a notification when I tell it to. But modern apps are exhausting:
+Look, all I wanted was a lightweight app that pops a notification on my phone at an exact time. But modern apps have lost their minds:
 
-1. **Google Tasks / Keep**: For some baffling reason, they insist on dumping every tiny reminder directly onto Google Calendar. Now my calendar is clogged with things like *"drink water"* or *"take chicken out of freezer"* alongside actual work meetings. My calendar looked disgusting.
-2. **Play Store Reminder Apps**: Download any top-rated reminder app and you are instantly greeted with:
-   - Fullscreen video ads with sound
-   - *"Create an account or sign in with Google"*
-   - *"Upgrade to Pro ($4.99/mo) to unlock repeat reminders"*
-   - Requesting contacts, location, and full internet access... *for a reminder app?*
+1. **Google Tasks / Keep**: For reasons beyond human comprehension, they insist on dumping every trivial ping directly onto Google Calendar. Now my calendar is a chaotic mess where *"book cab"*, *"grocery run"*, and *"water plants"* are competing for visual space with actual work meetings.
+2. **Play Store Reminder Apps**: Download any generic reminder tool and you're immediately hit with:
+   - Fullscreen video ads with unskippable audio
+   - Mandatory account creation and *"Sign in with Google"*
+   - A paid subscription just to unlock recurring reminders
+   - Demands for contacts, precise location, and full internet access... *for a reminder app?*
 
-**Notify has none of that bullshit.**
+**Notify has none of that nonsense:**
 - 🚫 **Zero Ads**
 - 🚫 **Zero Accounts / Logins**
-- 🚫 **Zero Internet Permission** (the app literally cannot talk to the internet even if it wanted to)
-- 🚫 **Zero Calendar Clutter** (leaves your Google Calendar completely untouched)
+- 🚫 **Zero Internet Permission** (no tracking, no telemetry, no calls home — it literally cannot connect to the web)
+- 🚫 **Zero Calendar Clutter** (keeps your calendar clean and sacred)
 - 📱 **100% Offline & Private**
 
 ---
 
-### The Tech Stack (or lack thereof)
+### How this was built
 
-**Full disclaimer**: I am **not** an Android developer. I do not know Kotlin. If you ask me about clean architecture, MVVM, MVI, or repository patterns, I will smile and nod politely.
-
-This entire app was **100% vibecoded and prompt-engineered into existence thanks to the god Opus**. I just threw prompts at it on a weekend until an APK popped out that does what I want. 
-
-This is **not a resume project**. Please don't review my code. It works on my machine and on my phone, and that's a massive victory in my book.
+So this entire app was **vibecoded over a weekend with the almighty Claude Opus** handling the Android heavy lifting. It's clean, lightweight, does exactly what it's supposed to do, and runs smoothly on device without drama.
 
 ---
 
-### What it actually does
+### Features
 
-- **Set a reminder**: Give it a title, optional notes, date, and time.
-- **Repeat if needed**: One-time, daily, weekdays, weekends, or specific days.
-- **Snooze button**: Hits you with a notification with an inline "Snooze" button so you can procrastinate properly.
-- **Clean history**: Completed reminders auto-clean themselves so the app doesn't hoard junk.
-- **Dark mode**: Because blinding white screens at midnight are a crime.
+- ⏰ **Exact Alarm Scheduling**: Uses Android's `AlarmManager` (`RTC_WAKEUP`) to trigger on time even when the phone is deep in Doze mode.
+- 🔁 **Flexible Repeats**: One-time, daily, weekdays, weekends, or custom days of the week.
+- 💤 **Actionable Notifications**: Pops a clean heads-up alert with an inline **Snooze** button right in the notification shade.
+- 🧹 **Auto-Cleanup**: Completed reminders prune themselves after a configurable window so you never have to hoard old pings.
+- 🌙 **Dark Mode Support**: Respects system theme or lets you lock it to dark mode.
 
 ---
 
-### How to build & install the APK
+### Building & Running the APK
 
-If for some reason you also want a no-nonsense reminder app without ad popups:
+#### Option 1: Command Line (Fastest)
 
-#### Option 1: Just build the APK via command line
-
-1. Make sure you have **Java 17** installed.
+1. Ensure you have **Java 17** installed.
 2. Run:
    ```bash
    ./gradlew assembleDebug
    ```
-3. Grab the generated APK file from:
+3. Your APK will be waiting at:
    ```text
    app/build/outputs/apk/debug/app-debug.apk
    ```
-4. Send it to your phone (via USB, Quick Share, Telegram, etc.) and install it.
+4. Transfer it to your phone and install.
 
 #### Option 2: Android Studio
 
-1. Open this folder in **Android Studio**.
-2. Plug in your phone (or start an emulator).
-3. Click the big green **▶ Run** button.
-4. Done.
+1. Open this directory in **Android Studio**.
+2. Connect your device (or fire up an emulator).
+3. Click the green **▶ Run** button.
