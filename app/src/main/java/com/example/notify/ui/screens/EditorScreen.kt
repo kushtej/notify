@@ -135,12 +135,10 @@ fun EditorScreen(onBack: () -> Unit) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
-            OutlinedTextField(
+            com.example.notify.ui.richtext.RichTextEditor(
                 value = desc,
                 onValueChange = { desc = it },
-                label = { Text("Details (Optional)") },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-                maxLines = 5
+                modifier = Modifier.fillMaxWidth()
             )
 
             Divider(modifier = Modifier.padding(vertical = 8.dp))

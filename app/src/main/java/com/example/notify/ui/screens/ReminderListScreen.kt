@@ -168,7 +168,7 @@ private fun ReminderCard(
                 )
                 if (reminder.desc.isNotEmpty()) {
                     Text(
-                        text = reminder.desc,
+                        text = com.example.notify.ui.richtext.RichTextFormatter.toPlainTextSummary(reminder.desc),
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis

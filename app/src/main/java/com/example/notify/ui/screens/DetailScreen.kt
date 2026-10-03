@@ -175,8 +175,9 @@ private fun ReminderDetailContent(reminder: Reminder, modifier: Modifier = Modif
 
         // Description
         if (reminder.desc.isNotEmpty()) {
-            Text(
+            com.example.notify.ui.richtext.FormattedText(
                 text = reminder.desc,
+                modifier = Modifier.fillMaxWidth(),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

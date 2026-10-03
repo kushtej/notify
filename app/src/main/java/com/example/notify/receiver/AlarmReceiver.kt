@@ -101,16 +101,26 @@ class AlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(reminder.title)
-            .setContentText(reminder.desc)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(openAppPendingIntent)
             .addAction(0, "Snooze", snoozePendingIntent)
-            .build()
 
+        if (reminder.desc.isNotBlank()) {
+            val summary = com.example.notify.ui.richtext.NotificationFormatter.toPlainTextSummary(reminder.desc)
+            val spanned = com.example.notify.ui.richtext.NotificationFormatter.toNotificationSpanned(reminder.desc)
+            builder.setContentText(summary)
+            builder.setStyle(
+                NotificationCompat.BigTextStyle()
+                    .setBigContentTitle(reminder.title)
+                    .bigText(spanned)
+            )
+        }
+
+        val notification = builder.build()
         manager.notify(reminder.id, notification)
     }
 
