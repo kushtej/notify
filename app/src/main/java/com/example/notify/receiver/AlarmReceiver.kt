@@ -153,7 +153,11 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     private fun scheduleNextRecurrence(context: Context, reminder: Reminder) {
-        val nextCal = Calendar.getInstance().apply { timeInMillis = reminder.timeInMillis }
+        val nextCal = Calendar.getInstance().apply {
+            timeInMillis = reminder.timeInMillis
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
         val nextTime = if (reminder.frequency == "Daily") {
             nextCal.add(Calendar.DAY_OF_YEAR, 1)
             nextCal.timeInMillis

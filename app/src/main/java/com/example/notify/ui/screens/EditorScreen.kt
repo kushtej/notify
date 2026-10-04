@@ -345,6 +345,7 @@ private fun saveReminder(
         set(Calendar.HOUR_OF_DAY, selectedHour)
         set(Calendar.MINUTE, selectedMinute)
         set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
     }
 
     when (frequency) {
@@ -352,6 +353,8 @@ private fun saveReminder(
             triggerCal.timeInMillis = selectedDateMillis
             triggerCal.set(Calendar.HOUR_OF_DAY, selectedHour)
             triggerCal.set(Calendar.MINUTE, selectedMinute)
+            triggerCal.set(Calendar.SECOND, 0)
+            triggerCal.set(Calendar.MILLISECOND, 0)
         }
         "Specific Days" -> {
             if (customDays.isEmpty()) {
