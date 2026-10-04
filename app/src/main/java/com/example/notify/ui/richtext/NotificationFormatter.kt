@@ -6,7 +6,7 @@ import android.text.TextUtils
 import androidx.core.text.HtmlCompat
 
 /**
- * Converts markdown-formatted reminder descriptions into styled Spanned text
+ * Converts formatted reminder descriptions into styled Spanned text
  * for high-priority Android Notifications (BigTextStyle).
  */
 object NotificationFormatter {
@@ -36,11 +36,16 @@ object NotificationFormatter {
             var escaped = TextUtils.htmlEncode(rawContent)
 
             // Convert markdown inline styles to HTML tags
-            // 1. Bold: **text** -> <b>text</b>
+            // 1. Combined bold + italic
+            escaped = escaped.replace(Regex("""\*\*\*(.+?)\*\*\*""")) { "<b><i>${it.groupValues[1]}</i></b>" }
+            escaped = escaped.replace(Regex("""\*\*_(.+?)_\*\*""")) { "<b><i>${it.groupValues[1]}</i></b>" }
+            escaped = escaped.replace(Regex("""_\*\*(.+?)\*\*_""")) { "<i><b>${it.groupValues[1]}</b></i>" }
+
+            // 2. Bold: **text** -> <b>text</b>
             escaped = escaped.replace(Regex("""\*\*(.+?)\*\*""")) { "<b>${it.groupValues[1]}</b>" }
-            // 2. Strikethrough: ~~text~~ -> <s>text</s>
+            // 3. Strikethrough: ~~text~~ -> <s>text</s>
             escaped = escaped.replace(Regex("""~~(.+?)~~""")) { "<s>${it.groupValues[1]}</s>" }
-            // 3. Italic: *text* or _text_ -> <i>text</i>
+            // 4. Italic: *text* or _text_ -> <i>text</i>
             escaped = escaped.replace(Regex("""(?<!\*)\*([^*]+?)\*(?!\*)""")) { "<i>${it.groupValues[1]}</i>" }
             escaped = escaped.replace(Regex("""(?<!_)_([^_]+?)_(?!_)""")) { "<i>${it.groupValues[1]}</i>" }
 

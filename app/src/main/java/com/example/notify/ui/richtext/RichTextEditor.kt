@@ -1,8 +1,6 @@
 package com.example.notify.ui.richtext
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,10 +17,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,7 +30,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -39,51 +38,67 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * A rich text editor resembling Google Chat / Microsoft Teams textbox.
- * Features a dedicated formatting toolbar (Bold, Italic, Strikethrough, Bullets, Numbers, Clear)
- * and an interactive Write / Preview toggle.
+ * A rich text editor resembling Google Chat / Microsoft Teams chatbox.
+ * Offers live WYSIWYG formatting without displaying raw markdown syntax (such as asterisks),
+ * with active toolbar states for Bold, Italic, Strikethrough, Bulleted and Numbered lists.
  */
 @Composable
 fun RichTextEditor(
     value: String,
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    label: String = "Details (Optional)",
+    label: String = "Details",
     placeholder: String = "Add notes, bullet points, numbers, formatting..."
 ) {
-    var textFieldValue by remember {
-        mutableStateOf(TextFieldValue(text = value, selection = TextRange(value.length)))
+    // Internal plain-text state and style spans
+    var plainTextValue by remember {
+        val (text, parsedSpans) = RichTextActions.parseMarkdown(value)
+        mutableStateOf(TextFieldValue(text = text, selection = TextRange(text.length)))
+    }
+    var spans by remember {
+        val (_, parsedSpans) = RichTextActions.parseMarkdown(value)
+        mutableStateOf(parsedSpans)
+    }
+    var activeStyles by remember {
+        mutableStateOf(setOf<RichStyle>())
     }
 
-    // Keep internal state synchronized if parent changes value externally
+    // Keep internal state synchronized when parent changes value externally
     LaunchedEffect(value) {
-        if (value != textFieldValue.text) {
-            textFieldValue = textFieldValue.copy(
-                text = value,
-                selection = TextRange(value.length)
+        val currentSerialized = RichTextActions.serializeToMarkdown(plainTextValue.text, spans)
+        if (value != currentSerialized) {
+            val (newPlainText, newSpans) = RichTextActions.parseMarkdown(value)
+            plainTextValue = plainTextValue.copy(
+                text = newPlainText,
+                selection = TextRange(newPlainText.length)
             )
+            spans = newSpans
+            activeStyles = emptySet()
         }
     }
 
-    var isPreviewMode by remember { mutableStateOf(false) }
     var isFocused by remember { mutableStateOf(false) }
-
     val primaryColor = MaterialTheme.colorScheme.primary
-    val syntaxColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-    val visualTransformation = remember(primaryColor, syntaxColor) {
-        RichTextFormatter.MarkdownVisualTransformation(primaryColor, syntaxColor)
+    val visualTransformation = remember(spans, primaryColor) {
+        RichTextFormatter.WysiwygVisualTransformation(spans, primaryColor)
     }
 
     val borderColor = when {
         isFocused -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
     }
+
+    // Active status for formatting buttons based on current selection / cursor
+    val isBoldActive = RichTextActions.isStyleActive(plainTextValue.selection, spans, RichStyle.BOLD, activeStyles)
+    val isItalicActive = RichTextActions.isStyleActive(plainTextValue.selection, spans, RichStyle.ITALIC, activeStyles)
+    val isStrikeActive = RichTextActions.isStyleActive(plainTextValue.selection, spans, RichStyle.STRIKETHROUGH, activeStyles)
+    val isBulletActive = RichTextActions.isLineBulleted(plainTextValue.text, plainTextValue.selection)
+    val isNumberActive = RichTextActions.isLineNumbered(plainTextValue.text, plainTextValue.selection)
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -92,207 +107,199 @@ fun RichTextEditor(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
     ) {
         Column {
-            // Header: Label and Write/Preview tabs
-            Row(
+            // Header label
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 14.dp, top = 10.dp, end = 14.dp, bottom = 4.dp)
+            )
+
+            // WYSIWYG input area
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .heightIn(min = 110.dp, max = 220.dp)
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                BasicTextField(
+                    value = plainTextValue,
+                    onValueChange = { newVal ->
+                        val (processedVal, updatedSpans, newActiveStyles) =
+                            RichTextActions.handleUserInput(
+                                oldVal = plainTextValue,
+                                newVal = newVal,
+                                currentSpans = spans,
+                                currentActiveStyles = activeStyles
+                            )
+                        plainTextValue = processedVal
+                        spans = updatedSpans
+                        activeStyles = newActiveStyles
 
-                // Segmented toggle: Write vs Preview
-                Row(
+                        val serialized = RichTextActions.serializeToMarkdown(processedVal.text, updatedSpans)
+                        onValueChange(serialized)
+                    },
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(2.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    SegmentButton(
-                        text = "Write",
-                        isSelected = !isPreviewMode,
-                        onClick = { isPreviewMode = false }
-                    )
-                    SegmentButton(
-                        text = "Preview",
-                        isSelected = isPreviewMode,
-                        onClick = { isPreviewMode = true }
-                    )
-                }
+                        .fillMaxWidth()
+                        .heightIn(min = 100.dp)
+                        .onFocusChanged { isFocused = it.isFocused },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                        lineHeight = 22.sp
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    visualTransformation = visualTransformation,
+                    decorationBox = { innerTextField ->
+                        if (plainTextValue.text.isEmpty()) {
+                            Text(
+                                text = placeholder,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                            )
+                        }
+                        innerTextField()
+                    }
+                )
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
 
-            if (!isPreviewMode) {
-                // Input area
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 240.dp)
-                        .padding(12.dp)
+            // Bottom formatting toolbar (Google Chat / Teams chatbox style)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Bold (B)
+                ToolbarButton(
+                    isActive = isBoldActive,
+                    onClick = {
+                        val (newVal, newSpans, newActive) = RichTextActions.toggleStyleAction(
+                            plainTextValue,
+                            spans,
+                            RichStyle.BOLD,
+                            activeStyles
+                        )
+                        plainTextValue = newVal
+                        spans = newSpans
+                        activeStyles = newActive
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
+                    }
                 ) {
-                    BasicTextField(
-                        value = textFieldValue,
-                        onValueChange = { newVal ->
-                            val processed = RichTextActions.handleValueChange(textFieldValue, newVal)
-                            textFieldValue = processed
-                            onValueChange(processed.text)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 120.dp)
-                            .onFocusChanged { isFocused = it.isFocused },
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                            lineHeight = 22.sp
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        visualTransformation = visualTransformation,
-                        decorationBox = { innerTextField ->
-                            if (textFieldValue.text.isEmpty()) {
-                                Text(
-                                    text = placeholder,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                                )
-                            }
-                            innerTextField()
-                        }
+                    Text("B", fontWeight = FontWeight.Black, fontSize = 15.sp)
+                }
+
+                // Italic (I)
+                ToolbarButton(
+                    isActive = isItalicActive,
+                    onClick = {
+                        val (newVal, newSpans, newActive) = RichTextActions.toggleStyleAction(
+                            plainTextValue,
+                            spans,
+                            RichStyle.ITALIC,
+                            activeStyles
+                        )
+                        plainTextValue = newVal
+                        spans = newSpans
+                        activeStyles = newActive
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
+                    }
+                ) {
+                    Text(
+                        "I",
+                        fontStyle = FontStyle.Italic,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Serif,
+                        fontSize = 15.sp
                     )
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-
-                // Bottom Formatting Toolbar (Teams / Google Chat style)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // Strikethrough (S)
+                ToolbarButton(
+                    isActive = isStrikeActive,
+                    onClick = {
+                        val (newVal, newSpans, newActive) = RichTextActions.toggleStyleAction(
+                            plainTextValue,
+                            spans,
+                            RichStyle.STRIKETHROUGH,
+                            activeStyles
+                        )
+                        plainTextValue = newVal
+                        spans = newSpans
+                        activeStyles = newActive
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
+                    }
                 ) {
-                    // Bold
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.applyBold(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Text("B", fontWeight = FontWeight.Black, fontSize = 15.sp)
+                    Text(
+                        "S",
+                        textDecoration = TextDecoration.LineThrough,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+
+                ToolbarDivider()
+
+                // Bulleted List
+                ToolbarButton(
+                    isActive = isBulletActive,
+                    onClick = {
+                        val (newVal, newSpans) = RichTextActions.toggleBulletList(plainTextValue, spans)
+                        plainTextValue = newVal
+                        spans = newSpans
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
                     }
-
-                    // Italic
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.applyItalic(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Text(
-                            "I",
-                            fontStyle = FontStyle.Italic,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Serif,
-                            fontSize = 15.sp
-                        )
-                    }
-
-                    // Strikethrough
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.applyStrikethrough(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Text(
-                            "S",
-                            textDecoration = TextDecoration.LineThrough,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                    }
-
-                    ToolbarDivider()
-
-                    // Bullet List
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.applyBulletList(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("•", fontWeight = FontWeight.Black, fontSize = 16.sp, color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(2.dp))
-                            Text("≡", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                    }
-
-                    // Numbered List
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.applyNumberedList(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("1.", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(1.dp))
-                            Text("≡", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        }
-                    }
-
-                    ToolbarDivider()
-
-                    // Clear Formatting
-                    ToolbarButton(
-                        onClick = {
-                            val updated = RichTextActions.clearFormatting(textFieldValue)
-                            textFieldValue = updated
-                            onValueChange(updated.text)
-                        }
-                    ) {
-                        Text(
-                            "T̶",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
-                        )
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("•", fontWeight = FontWeight.Black, fontSize = 16.sp)
+                        Spacer(Modifier.width(2.dp))
+                        Text("≡", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
-            } else {
-                // Preview mode
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp)
-                        .padding(14.dp)
-                ) {
-                    if (textFieldValue.text.isBlank()) {
-                        Text(
-                            text = "No details to preview. Switch to \"Write\" to add formatted notes.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                        )
-                    } else {
-                        FormattedText(
-                            text = textFieldValue.text,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+
+                // Numbered List
+                ToolbarButton(
+                    isActive = isNumberActive,
+                    onClick = {
+                        val (newVal, newSpans) = RichTextActions.toggleNumberedList(plainTextValue, spans)
+                        plainTextValue = newVal
+                        spans = newSpans
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
                     }
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("1.", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Spacer(Modifier.width(1.dp))
+                        Text("≡", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+
+                ToolbarDivider()
+
+                // Clear Formatting
+                ToolbarButton(
+                    isActive = false,
+                    onClick = {
+                        val (newVal, newSpans, newActive) = RichTextActions.clearFormattingAction(
+                            plainTextValue,
+                            spans
+                        )
+                        plainTextValue = newVal
+                        spans = newSpans
+                        activeStyles = newActive
+                        onValueChange(RichTextActions.serializeToMarkdown(newVal.text, newSpans))
+                    }
+                ) {
+                    Text(
+                        "T̶",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.85f)
+                    )
                 }
             }
         }
@@ -301,18 +308,26 @@ fun RichTextEditor(
 
 @Composable
 private fun ToolbarButton(
+    isActive: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
+    val bgColor = if (isActive) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val contentColor = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    val border = if (isActive) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)) else null
+
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(6.dp),
-        color = Color.Transparent,
-        modifier = modifier.size(34.dp)
+        shape = RoundedCornerShape(8.dp),
+        color = bgColor,
+        border = border,
+        modifier = modifier.size(36.dp)
     ) {
         Box(contentAlignment = Alignment.Center) {
-            content()
+            CompositionLocalProvider(LocalContentColor provides contentColor) {
+                content()
+            }
         }
     }
 }
@@ -321,35 +336,19 @@ private fun ToolbarButton(
 private fun ToolbarDivider() {
     Box(
         modifier = Modifier
-            .height(18.dp)
+            .height(20.dp)
             .width(1.dp)
-            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
-    )
-}
-
-@Composable
-private fun SegmentButton(
-    text: String,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    val bgColor = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
-    val textColor = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(bgColor)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 2.dp)
+            .heightIn(max = 20.dp)
+            .size(width = 1.dp, height = 20.dp)
     ) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-            color = textColor,
-            textAlign = TextAlign.Center
-        )
+        androidx.compose.foundation.Canvas(modifier = Modifier.size(width = 1.dp, height = 20.dp)) {
+            drawLine(
+                color = Color.Gray.copy(alpha = 0.35f),
+                start = androidx.compose.ui.geometry.Offset(0f, 0f),
+                end = androidx.compose.ui.geometry.Offset(0f, size.height),
+                strokeWidth = 2f
+            )
+        }
     }
 }
