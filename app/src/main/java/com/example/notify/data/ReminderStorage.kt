@@ -2,6 +2,7 @@ package com.example.notify.data
 
 import android.content.Context
 import com.example.notify.model.Reminder
+import com.example.notify.scheduler.AlarmScheduler
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -53,21 +54,7 @@ object ReminderStorage {
         val array = JSONArray(jsonStr)
         val list = mutableListOf<Reminder>()
         for (i in 0 until array.length()) {
-            val obj = array.getJSONObject(i)
-            val daysArray = obj.optJSONArray("customDays") ?: JSONArray()
-            val daysList = List(daysArray.length()) { daysArray.getInt(it) }
-            list.add(
-                Reminder(
-                    id = obj.getInt("id"),
-                    title = obj.getString("title"),
-                    desc = obj.optString("desc", ""),
-                    timeInMillis = obj.getLong("timeInMillis"),
-                    frequency = obj.optString("frequency", "One-Time"),
-                    customDays = daysList,
-                    isCompleted = obj.optBoolean("isCompleted", false),
-                    isSnoozed = obj.optBoolean("isSnoozed", false)
-                )
-            )
+            list.add(fromJson(array.getJSONObject(i)))
         }
         return list.sortedBy { it.timeInMillis }
     }
@@ -112,23 +99,189 @@ object ReminderStorage {
         if (list.size != filtered.size) saveList(context, filtered)
     }
 
+    // --- JSON serialization ---
+
+    private fun fromJson(obj: JSONObject): Reminder {
+        val daysArray = obj.optJSONArray("customDays") ?: JSONArray()
+        val daysList = List(daysArray.length()) { daysArray.getInt(it) }
+
+        val extraTimesArray = obj.optJSONArray("extraTimes") ?: JSONArray()
+        val extraTimesList = List(extraTimesArray.length()) { extraTimesArray.getString(it) }
+
+        // Backward-compat: migrate old "Daily" → "Daily" with intervalDays=1,
+        // old "Specific Days" → "Weekly" with intervalWeeks=1
+        val rawFreq = obj.optString("frequency", "One-Time")
+        val frequency = when (rawFreq) {
+            "Specific Days" -> "Weekly"
+            else -> rawFreq
+        }
+
+        return Reminder(
+            id = obj.getInt("id"),
+            title = obj.getString("title"),
+            desc = obj.optString("desc", ""),
+            timeInMillis = obj.getLong("timeInMillis"),
+            frequency = frequency,
+            customDays = daysList,
+            isCompleted = obj.optBoolean("isCompleted", false),
+            isSnoozed = obj.optBoolean("isSnoozed", false),
+            intervalDays = obj.optInt("intervalDays", 1),
+            intervalWeeks = obj.optInt("intervalWeeks", 1),
+            monthlyType = obj.optString("monthlyType", "day_of_month"),
+            monthlyDay = obj.optInt("monthlyDay", 1),
+            monthlyWeekOrdinal = obj.optInt("monthlyWeekOrdinal", 1),
+            monthlyDayOfWeek = obj.optInt("monthlyDayOfWeek", 2),
+            intervalMonths = obj.optInt("intervalMonths", 1),
+            extraTimes = extraTimesList
+        )
+    }
+
+    private fun toJson(r: Reminder): JSONObject = JSONObject().apply {
+        put("id", r.id)
+        put("title", r.title)
+        put("desc", r.desc)
+        put("timeInMillis", r.timeInMillis)
+        put("frequency", r.frequency)
+        put("isCompleted", r.isCompleted)
+        put("isSnoozed", r.isSnoozed)
+        put("intervalDays", r.intervalDays)
+        put("intervalWeeks", r.intervalWeeks)
+        put("monthlyType", r.monthlyType)
+        put("monthlyDay", r.monthlyDay)
+        put("monthlyWeekOrdinal", r.monthlyWeekOrdinal)
+        put("monthlyDayOfWeek", r.monthlyDayOfWeek)
+        put("intervalMonths", r.intervalMonths)
+
+        val daysArr = JSONArray()
+        r.customDays.forEach { daysArr.put(it) }
+        put("customDays", daysArr)
+
+        val timesArr = JSONArray()
+        r.extraTimes.forEach { timesArr.put(it) }
+        put("extraTimes", timesArr)
+    }
+
     private fun saveList(context: Context, list: List<Reminder>) {
         val array = JSONArray()
-        list.forEach { r ->
-            val obj = JSONObject().apply {
-                put("id", r.id)
-                put("title", r.title)
-                put("desc", r.desc)
-                put("timeInMillis", r.timeInMillis)
-                put("frequency", r.frequency)
-                put("isCompleted", r.isCompleted)
-                put("isSnoozed", r.isSnoozed)
-                val daysArr = JSONArray()
-                r.customDays.forEach { daysArr.put(it) }
-                put("customDays", daysArr)
-            }
-            array.put(obj)
-        }
+        list.forEach { array.put(toJson(it)) }
         prefs(context).edit().putString(KEY_REMINDERS, array.toString()).apply()
+    }
+
+    /**
+     * Serializes all reminders to a clean, formatted JSON string.
+     */
+    fun exportRemindersJson(context: Context): String {
+        val list = getAllReminders(context)
+        val array = JSONArray()
+        list.forEach { array.put(toJson(it)) }
+        val wrapper = JSONObject().apply {
+            put("app", "Notify")
+            put("version", 1)
+            put("exportedAt", System.currentTimeMillis())
+            put("count", list.size)
+            put("reminders", array)
+        }
+        return wrapper.toString(2)
+    }
+
+    /**
+     * Inspects a JSON string and returns how many reminders it contains.
+     * Supports both wrapper format {"reminders": [...]} and raw array [...].
+     */
+    fun countRemindersInJson(jsonStr: String): Int {
+        return try {
+            val trimmed = jsonStr.trim()
+            val array = if (trimmed.startsWith("{")) {
+                val root = JSONObject(trimmed)
+                root.optJSONArray("reminders") ?: JSONArray()
+            } else {
+                JSONArray(trimmed)
+            }
+            array.length()
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    /**
+     * Imports reminders from JSON.
+     * @param replaceExisting if true, clears existing reminders and replaces them.
+     *                        if false (merge), keeps existing reminders and adds new ones (re-keying IDs if needed).
+     * @return count of imported reminders
+     */
+    fun importRemindersFromJson(context: Context, jsonStr: String, replaceExisting: Boolean): Int {
+        val list = mutableListOf<Reminder>()
+        val trimmed = jsonStr.trim()
+        val array = if (trimmed.startsWith("{")) {
+            val root = JSONObject(trimmed)
+            root.optJSONArray("reminders") ?: JSONArray()
+        } else {
+            JSONArray(trimmed)
+        }
+
+        for (i in 0 until array.length()) {
+            try {
+                list.add(fromJson(array.getJSONObject(i)))
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        if (list.isEmpty()) return 0
+
+        val current = if (replaceExisting) {
+            getAllReminders(context).forEach { AlarmScheduler.cancel(context, it.id) }
+            emptyList()
+        } else {
+            getAllReminders(context)
+        }
+
+        var maxId = (current.map { it.id } + list.map { it.id }).maxOrNull() ?: 0
+
+        val mergedList = current.toMutableList()
+        val toSchedule = mutableListOf<Reminder>()
+
+        if (replaceExisting) {
+            mergedList.clear()
+            mergedList.addAll(list)
+            toSchedule.addAll(list)
+        } else {
+            val existingIds = current.map { it.id }.toSet()
+            for (item in list) {
+                val toAdd = if (existingIds.contains(item.id)) {
+                    maxId++
+                    item.copy(id = maxId)
+                } else {
+                    item
+                }
+                mergedList.add(toAdd)
+                toSchedule.add(toAdd)
+            }
+        }
+
+        val now = System.currentTimeMillis()
+        val finalList = mutableListOf<Reminder>()
+        for (r in mergedList) {
+            if (toSchedule.any { it.id == r.id } && !r.isCompleted && r.timeInMillis <= now && r.frequency != "One-Time") {
+                val nextMillis = AlarmScheduler.calculateNextOccurrence(r)
+                val updated = r.copy(timeInMillis = nextMillis, isSnoozed = false)
+                finalList.add(updated)
+            } else {
+                finalList.add(r)
+            }
+        }
+
+        saveList(context, finalList)
+
+        // Reschedule active alarms
+        for (r in finalList) {
+            if (toSchedule.any { it.id == r.id } && !r.isCompleted) {
+                if (r.timeInMillis > now || r.frequency != "One-Time") {
+                    AlarmScheduler.schedule(context, r)
+                }
+            }
+        }
+
+        return list.size
     }
 }

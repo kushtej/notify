@@ -203,14 +203,14 @@ private fun ReminderDetailContent(reminder: Reminder, modifier: Modifier = Modif
 
                 DetailInfoRow(
                     icon = Icons.Default.Notifications,
-                    label = "Time",
-                    value = timeFormatter.format(Date(reminder.timeInMillis))
+                    label = if (reminder.extraTimes.isNotEmpty()) "Times" else "Time",
+                    value = com.example.notify.ui.FrequencyFormatter.formatAllTimes(reminder.timeInMillis, reminder.extraTimes)
                 )
 
                 DetailInfoRow(
                     icon = Icons.Default.Refresh,
                     label = "Repeat",
-                    value = formatFrequency(reminder)
+                    value = com.example.notify.ui.FrequencyFormatter.formatFrequency(reminder)
                 )
             }
         }
@@ -260,21 +260,3 @@ private fun DetailInfoRow(icon: ImageVector, label: String, value: String) {
     }
 }
 
-private fun formatFrequency(reminder: Reminder): String {
-    if (reminder.frequency == "Specific Days") {
-        val dayNames = reminder.customDays.sorted().map { dayNum ->
-            when (dayNum) {
-                Calendar.SUNDAY -> "Sun"
-                Calendar.MONDAY -> "Mon"
-                Calendar.TUESDAY -> "Tue"
-                Calendar.WEDNESDAY -> "Wed"
-                Calendar.THURSDAY -> "Thu"
-                Calendar.FRIDAY -> "Fri"
-                Calendar.SATURDAY -> "Sat"
-                else -> ""
-            }
-        }
-        return dayNames.joinToString(", ")
-    }
-    return reminder.frequency
-}

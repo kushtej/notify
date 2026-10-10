@@ -24,6 +24,7 @@ class AlarmReceiver : BroadcastReceiver() {
         const val ACTION_FIRE = "ACTION_FIRE"
         const val ACTION_SNOOZE = "ACTION_SNOOZE"
         const val EXTRA_ID = "ID"
+        const val EXTRA_TIME_INDEX = "TIME_INDEX"
         const val EXTRA_TITLE = "TITLE"
         const val EXTRA_DESC = "DESC"
         private const val CHANNEL_ID = "notify_channel"
@@ -153,21 +154,7 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     private fun scheduleNextRecurrence(context: Context, reminder: Reminder) {
-        val nextCal = Calendar.getInstance().apply {
-            timeInMillis = reminder.timeInMillis
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        val nextTime = if (reminder.frequency == "Daily") {
-            nextCal.add(Calendar.DAY_OF_YEAR, 1)
-            nextCal.timeInMillis
-        } else {
-            AlarmScheduler.getNextDayMillis(
-                nextCal.get(Calendar.HOUR_OF_DAY),
-                nextCal.get(Calendar.MINUTE),
-                reminder.customDays.toSet()
-            )
-        }
+        val nextTime = AlarmScheduler.calculateNextOccurrence(reminder)
         val updatedReminder = reminder.copy(timeInMillis = nextTime)
         ReminderStorage.saveReminder(context, updatedReminder)
         AlarmScheduler.schedule(context, updatedReminder)
