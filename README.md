@@ -33,7 +33,13 @@ So this entire app was **vibecoded over a weekend with the almighty Claude Opus*
 ### Features
 
 - **Exact Alarm Scheduling**: Uses Android's `AlarmManager` (`RTC_WAKEUP`) to trigger on time even when the phone is deep in Doze mode.
-- **Flexible Repeats**: One-time, daily, weekdays, weekends, or custom days of the week.
+- **Multiple Times per Day**: Add multiple alert times (e.g., 9:00 AM, 2:00 PM, 8:00 PM) to a single reminder without duplicate entries.
+- **Flexible Recurrence**:
+  - **Specific Days**: Select any days of the week with instant presets (*All Days*, *Weekdays*, *Weekends*).
+  - **Weekly Cycles**: Repeat every week, every other week, or any custom week interval.
+  - **Monthly Rules**: By date (1st–31st or dynamic *Last Day of the Month*) or by weekday pattern (*2nd Tuesday*, *Last Friday*).
+  - **Monthly Cycles**: Repeat every month, every 6th month, once a year, or custom month intervals.
+- **Plain-English Schedule Preview**: Live ℹ️ explanation banner translates your schedule into clear English so you always know when it fires.
 - **Actionable Notifications**: Pops a clean heads-up alert with an inline **Snooze** button right in the notification shade.
 - **Auto-Cleanup**: Completed reminders prune themselves after a configurable window so you never have to hoard old pings.
 - **Dark Mode Support**: Respects system theme or lets you lock it to dark mode.

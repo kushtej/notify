@@ -175,14 +175,19 @@ private fun ReminderCard(
                     )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
+                val timeSummary = if (reminder.extraTimes.isNotEmpty()) {
+                    "${dateFormatter.format(Date(reminder.timeInMillis))} (+${reminder.extraTimes.size} more)"
+                } else {
+                    dateFormatter.format(Date(reminder.timeInMillis))
+                }
                 Text(
-                    text = dateFormatter.format(Date(reminder.timeInMillis)),
+                    text = timeSummary,
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.primary
                 )
                 if (reminder.frequency != "One-Time") {
                     Text(
-                        text = "\u21BB ${reminder.frequency}",
+                        text = "\u21BB ${com.example.notify.ui.FrequencyFormatter.formatFrequency(reminder)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.secondary
                     )
