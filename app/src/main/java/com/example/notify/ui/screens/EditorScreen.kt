@@ -123,23 +123,43 @@ fun EditorScreen(onBack: () -> Unit) {
     var monthlyDayOfWeek by remember { mutableIntStateOf(existing?.monthlyDayOfWeek ?: Calendar.TUESDAY) }
     var intervalMonths by remember { mutableIntStateOf(existing?.intervalMonths ?: 1) }
 
-    // Notification times: primary + extras
+    // Notification times: list of "HH:mm". For a new reminder, starts empty (no default current time).
+    var notificationTimes by remember {
+        mutableStateOf(
+            if (existing != null) {
+                val c = Calendar.getInstance().apply { timeInMillis = existing.timeInMillis }
+                val primary = String.format("%02d:%02d", c.get(Calendar.HOUR_OF_DAY), c.get(Calendar.MINUTE))
+                listOf(primary) + existing.extraTimes
+            } else {
+                emptyList()
+            }
+        )
+    }
+
     val cal = Calendar.getInstance().apply {
         if (existing != null) timeInMillis = existing.timeInMillis
     }
     var selectedDateMillis by remember { mutableStateOf(cal.timeInMillis) }
-    var selectedHour by remember { mutableIntStateOf(cal.get(Calendar.HOUR_OF_DAY)) }
-    var selectedMinute by remember { mutableIntStateOf(cal.get(Calendar.MINUTE)) }
-    var extraTimes by remember { mutableStateOf(existing?.extraTimes ?: emptyList()) }
+
+    val primaryHour = if (notificationTimes.isNotEmpty()) {
+        notificationTimes.first().split(":").getOrNull(0)?.toIntOrNull() ?: -1
+    } else -1
+
+    val primaryMinute = if (notificationTimes.isNotEmpty()) {
+        notificationTimes.first().split(":").getOrNull(1)?.toIntOrNull() ?: -1
+    } else -1
+
+    val extraTimes = if (notificationTimes.size > 1) {
+        notificationTimes.drop(1)
+    } else emptyList()
 
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
-    var editingTimeIndex by remember { mutableIntStateOf(-1) } // -1 = primary, >=0 = extra index
+    var editingTimeIndex by remember { mutableIntStateOf(-1) } // -1 = adding new time, >=0 = index of time being edited
     var expandedFreq by remember { mutableStateOf(false) }
 
     val dateFormatter = remember { SimpleDateFormat("EEEE, MMM dd, yyyy", Locale.getDefault()) }
     val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
-    val timePickerState = rememberTimePickerState(initialHour = selectedHour, initialMinute = selectedMinute)
 
     Scaffold(
         topBar = {
@@ -160,9 +180,7 @@ fun EditorScreen(onBack: () -> Unit) {
                             frequency = frequency,
                             customDays = customDays,
                             selectedDateMillis = selectedDateMillis,
-                            selectedHour = selectedHour,
-                            selectedMinute = selectedMinute,
-                            extraTimes = extraTimes,
+                            notificationTimes = notificationTimes,
                             intervalDays = 1,
                             intervalWeeks = intervalWeeks,
                             monthlyType = monthlyType,
@@ -234,21 +252,8 @@ fun EditorScreen(onBack: () -> Unit) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Primary time chip
-                        InputChip(
-                            selected = true,
-                            onClick = {
-                                editingTimeIndex = -1
-                                showTimePicker = true
-                            },
-                            label = { Text(formatTime(selectedHour, selectedMinute), fontWeight = FontWeight.Medium) },
-                            leadingIcon = {
-                                Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
-                            }
-                        )
-
-                        // Extra time chips
-                        extraTimes.forEachIndexed { index, timeStr ->
+                        // All notification time chips
+                        notificationTimes.forEachIndexed { index, timeStr ->
                             InputChip(
                                 selected = true,
                                 onClick = {
@@ -256,6 +261,9 @@ fun EditorScreen(onBack: () -> Unit) {
                                     showTimePicker = true
                                 },
                                 label = { Text(formatTimeStr(timeStr), fontWeight = FontWeight.Medium) },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
+                                },
                                 trailingIcon = {
                                     Icon(
                                         Icons.Default.Close,
@@ -263,7 +271,7 @@ fun EditorScreen(onBack: () -> Unit) {
                                         modifier = Modifier
                                             .size(16.dp)
                                             .clickable {
-                                                extraTimes = extraTimes.toMutableList().apply { removeAt(index) }
+                                                notificationTimes = notificationTimes.toMutableList().apply { removeAt(index) }
                                             }
                                     )
                                 }
@@ -273,7 +281,7 @@ fun EditorScreen(onBack: () -> Unit) {
                         // Add time chip
                         AssistChip(
                             onClick = {
-                                editingTimeIndex = extraTimes.size
+                                editingTimeIndex = -1
                                 showTimePicker = true
                             },
                             label = { Text("+ Add Time") },
@@ -303,8 +311,8 @@ fun EditorScreen(onBack: () -> Unit) {
                         dateMillis = selectedDateMillis,
                         formatter = dateFormatter,
                         onClick = { showDatePicker = true },
-                        primaryHour = selectedHour,
-                        primaryMinute = selectedMinute,
+                        primaryHour = primaryHour,
+                        primaryMinute = primaryMinute,
                         extraTimes = extraTimes
                     )
                 }
@@ -315,8 +323,8 @@ fun EditorScreen(onBack: () -> Unit) {
                         onDaysChange = { customDays = it },
                         intervalWeeks = intervalWeeks,
                         onIntervalWeeksChange = { intervalWeeks = it },
-                        primaryHour = selectedHour,
-                        primaryMinute = selectedMinute,
+                        primaryHour = primaryHour,
+                        primaryMinute = primaryMinute,
                         extraTimes = extraTimes
                     )
                 }
@@ -333,8 +341,8 @@ fun EditorScreen(onBack: () -> Unit) {
                         onDayOfWeekChange = { monthlyDayOfWeek = it },
                         intervalMonths = intervalMonths,
                         onIntervalMonthsChange = { intervalMonths = it },
-                        primaryHour = selectedHour,
-                        primaryMinute = selectedMinute,
+                        primaryHour = primaryHour,
+                        primaryMinute = primaryMinute,
                         extraTimes = extraTimes
                     )
                 }
@@ -362,21 +370,38 @@ fun EditorScreen(onBack: () -> Unit) {
 
     // ── Time picker dialog ─────────────────────────────────────────
     if (showTimePicker) {
+        val initialH: Int
+        val initialM: Int
+        if (editingTimeIndex in notificationTimes.indices) {
+            val parts = notificationTimes[editingTimeIndex].split(":")
+            initialH = parts.getOrNull(0)?.toIntOrNull() ?: 9
+            initialM = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        } else {
+            val nowCal = Calendar.getInstance()
+            initialH = nowCal.get(Calendar.HOUR_OF_DAY)
+            initialM = nowCal.get(Calendar.MINUTE)
+        }
+        val timePickerState = rememberTimePickerState(
+            initialHour = initialH,
+            initialMinute = initialM,
+            is24Hour = false
+        )
+
         AlertDialog(
             onDismissRequest = { showTimePicker = false },
             confirmButton = {
                 TextButton(onClick = {
                     val h = timePickerState.hour
                     val m = timePickerState.minute
-                    if (editingTimeIndex == -1) {
-                        selectedHour = h
-                        selectedMinute = m
-                    } else if (editingTimeIndex < extraTimes.size) {
-                        extraTimes = extraTimes.toMutableList().apply {
-                            set(editingTimeIndex, String.format("%02d:%02d", h, m))
+                    val formatted = String.format("%02d:%02d", h, m)
+                    if (editingTimeIndex in notificationTimes.indices) {
+                        notificationTimes = notificationTimes.toMutableList().apply {
+                            set(editingTimeIndex, formatted)
                         }
                     } else {
-                        extraTimes = extraTimes + String.format("%02d:%02d", h, m)
+                        if (!notificationTimes.contains(formatted)) {
+                            notificationTimes = notificationTimes + formatted
+                        }
                     }
                     showTimePicker = false
                 }) { Text("OK") }
@@ -991,9 +1016,7 @@ private fun saveReminder(
     frequency: String,
     customDays: Set<Int>,
     selectedDateMillis: Long,
-    selectedHour: Int,
-    selectedMinute: Int,
-    extraTimes: List<String>,
+    notificationTimes: List<String>,
     intervalDays: Int,
     intervalWeeks: Int,
     monthlyType: String,
@@ -1007,6 +1030,16 @@ private fun saveReminder(
         Toast.makeText(context, "Title required", Toast.LENGTH_SHORT).show()
         return
     }
+
+    if (notificationTimes.isEmpty()) {
+        Toast.makeText(context, "Please add at least one notification time", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    val primaryParts = notificationTimes.first().split(":")
+    val selectedHour = primaryParts.getOrNull(0)?.toIntOrNull() ?: 0
+    val selectedMinute = primaryParts.getOrNull(1)?.toIntOrNull() ?: 0
+    val extraTimes = if (notificationTimes.size > 1) notificationTimes.drop(1) else emptyList()
 
     val triggerCal = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, selectedHour)

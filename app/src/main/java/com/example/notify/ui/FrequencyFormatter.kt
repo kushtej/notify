@@ -138,7 +138,9 @@ object FrequencyFormatter {
 
     fun formatTimesDescription(primaryHour: Int, primaryMinute: Int, extraTimes: List<String>): String {
         val times = mutableListOf<String>()
-        times.add(formatHourMinute(primaryHour, primaryMinute))
+        if (primaryHour in 0..23 && primaryMinute in 0..59) {
+            times.add(formatHourMinute(primaryHour, primaryMinute))
+        }
         extraTimes.forEach { extra ->
             val parts = extra.split(":")
             if (parts.size == 2) {
@@ -148,6 +150,7 @@ object FrequencyFormatter {
             }
         }
         return when (times.size) {
+            0 -> ""
             1 -> "at ${times[0]}"
             2 -> "at ${times[0]} and ${times[1]}"
             else -> "at ${times.dropLast(1).joinToString(", ")}, and ${times.last()}"
@@ -162,6 +165,10 @@ object FrequencyFormatter {
         extraTimes: List<String>
     ): String {
         val timesDesc = formatTimesDescription(primaryHour, primaryMinute, extraTimes)
+
+        if (timesDesc.isEmpty()) {
+            return "Please add at least one notification time."
+        }
 
         if (selectedDays.isEmpty()) {
             return "Please select at least one day for the notification to trigger."
@@ -213,6 +220,11 @@ object FrequencyFormatter {
         extraTimes: List<String>
     ): String {
         val timesDesc = formatTimesDescription(primaryHour, primaryMinute, extraTimes)
+
+        if (timesDesc.isEmpty()) {
+            return "Please add at least one notification time."
+        }
+
         val cycle = formatMonthCycleSentence(intervalMonths)
 
         return if (monthlyType == "day_of_month") {
@@ -258,8 +270,11 @@ object FrequencyFormatter {
         primaryMinute: Int,
         extraTimes: List<String>
     ): String {
-        val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(dateMillis))
         val timesDesc = formatTimesDescription(primaryHour, primaryMinute, extraTimes)
+        if (timesDesc.isEmpty()) {
+            return "Please add at least one notification time."
+        }
+        val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(dateMillis))
         return "Notification will trigger once on $dateStr $timesDesc."
     }
 

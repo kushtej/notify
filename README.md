@@ -40,8 +40,11 @@ So this entire app was **vibecoded over a weekend with the almighty Claude Opus*
   - **Monthly Rules**: By date (1st–31st or dynamic *Last Day of the Month*) or by weekday pattern (*2nd Tuesday*, *Last Friday*).
   - **Monthly Cycles**: Repeat every month, every 6th month, once a year, or custom month intervals.
 - **Plain-English Schedule Preview**: Live ℹ️ explanation banner translates your schedule into clear English so you always know when it fires.
+- **Smart Grouping & Quick Filters**: Automatically groups active reminders into collapsible sections (*Due Today*, *Upcoming*, *Repeating Schedules*) with quick one-tap filter chips (*All*, *Today*, *Repeating*, *Upcoming*).
+- **Instant Search**: Quickly find any reminder in real time by title or description.
 - **Actionable Notifications**: Pops a clean heads-up alert with an inline **Snooze** button right in the notification shade.
 - **Auto-Cleanup**: Completed reminders prune themselves after a configurable window so you never have to hoard old pings.
+- **JSON Import & Export**: Back up all reminders to a JSON file or restore/merge them anytime directly from Settings.
 - **Dark Mode Support**: Respects system theme or lets you lock it to dark mode.
 
 ---
