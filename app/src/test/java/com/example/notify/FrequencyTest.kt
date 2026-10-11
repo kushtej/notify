@@ -4,9 +4,11 @@ import com.example.notify.model.Reminder
 import com.example.notify.scheduler.AlarmScheduler
 import com.example.notify.ui.FrequencyFormatter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Calendar
+import java.util.TimeZone
 
 class FrequencyTest {
 
@@ -398,5 +400,207 @@ class FrequencyTest {
             timeInMillis = now - 5000L, frequency = "One-Time"
         )
         org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersWithinOneHour(inPast, now))
+    }
+
+    @Test
+    fun testWeeklyIntervalStartingWeekAfterNext() {
+        val now = System.currentTimeMillis()
+        val currentMonday = AlarmScheduler.getStartOfWeek(now)
+
+        // Target: Every other Tuesday (interval = 2)
+        // Set start week to week after next (2 weeks ahead)
+        val weekAfterNextMonday = (currentMonday.clone() as Calendar).apply {
+            add(Calendar.WEEK_OF_YEAR, 2)
+        }
+
+        val firstTrigger = AlarmScheduler.getNextWeeklyMillis(
+            hour = 10,
+            minute = 0,
+            allowedDays = setOf(Calendar.TUESDAY),
+            intervalWeeks = 2,
+            startMillis = weekAfterNextMonday.timeInMillis,
+            fromMillis = now
+        )
+
+        val cal1 = Calendar.getInstance().apply { timeInMillis = firstTrigger }
+        assertEquals(Calendar.TUESDAY, cal1.get(Calendar.DAY_OF_WEEK))
+        assertEquals(10, cal1.get(Calendar.HOUR_OF_DAY))
+        val diffWeeks1 = ((AlarmScheduler.getStartOfWeek(firstTrigger).timeInMillis - currentMonday.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        assertEquals(2, diffWeeks1)
+
+        // Next occurrence after firstTrigger
+        val secondTrigger = AlarmScheduler.getNextWeeklyMillis(
+            hour = 10,
+            minute = 0,
+            allowedDays = setOf(Calendar.TUESDAY),
+            intervalWeeks = 2,
+            startMillis = weekAfterNextMonday.timeInMillis,
+            fromMillis = firstTrigger
+        )
+        val diffWeeks2 = ((AlarmScheduler.getStartOfWeek(secondTrigger).timeInMillis - currentMonday.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        assertEquals(4, diffWeeks2) // Exactly 2 weeks after week 2 = week 4! Week 3 skipped!
+    }
+
+    @Test
+    fun testWeeklyMultipleDaysAlternatingWeeks() {
+        val now = System.currentTimeMillis()
+        val currentMonday = AlarmScheduler.getStartOfWeek(now)
+
+        // Repeat every other week on Tuesday & Thursday starting next week (week 1)
+        val nextMonday = (currentMonday.clone() as Calendar).apply { add(Calendar.WEEK_OF_YEAR, 1) }
+
+        val trigger1 = AlarmScheduler.getNextWeeklyMillis(
+            hour = 9,
+            minute = 0,
+            allowedDays = setOf(Calendar.TUESDAY, Calendar.THURSDAY),
+            intervalWeeks = 2,
+            startMillis = nextMonday.timeInMillis,
+            fromMillis = now
+        )
+        val cal1 = Calendar.getInstance().apply { timeInMillis = trigger1 }
+        assertEquals(Calendar.TUESDAY, cal1.get(Calendar.DAY_OF_WEEK))
+        val diffWeeks1 = ((AlarmScheduler.getStartOfWeek(trigger1).timeInMillis - currentMonday.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        assertEquals(1, diffWeeks1)
+
+        // After Tuesday fires in week 1, Thursday should fire in the same week
+        val trigger2 = AlarmScheduler.getNextWeeklyMillis(
+            hour = 9,
+            minute = 0,
+            allowedDays = setOf(Calendar.TUESDAY, Calendar.THURSDAY),
+            intervalWeeks = 2,
+            startMillis = nextMonday.timeInMillis,
+            fromMillis = trigger1
+        )
+        val cal2 = Calendar.getInstance().apply { timeInMillis = trigger2 }
+        assertEquals(Calendar.THURSDAY, cal2.get(Calendar.DAY_OF_WEEK))
+        val diffWeeks2 = ((AlarmScheduler.getStartOfWeek(trigger2).timeInMillis - currentMonday.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        assertEquals(1, diffWeeks2) // Same week!
+
+        // After Thursday fires in week 1, week 2 is skipped and it fires Tuesday in week 3!
+        val trigger3 = AlarmScheduler.getNextWeeklyMillis(
+            hour = 9,
+            minute = 0,
+            allowedDays = setOf(Calendar.TUESDAY, Calendar.THURSDAY),
+            intervalWeeks = 2,
+            startMillis = nextMonday.timeInMillis,
+            fromMillis = trigger2
+        )
+        val cal3 = Calendar.getInstance().apply { timeInMillis = trigger3 }
+        assertEquals(Calendar.TUESDAY, cal3.get(Calendar.DAY_OF_WEEK))
+        val diffWeeks3 = ((AlarmScheduler.getStartOfWeek(trigger3).timeInMillis - currentMonday.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        assertEquals(3, diffWeeks3) // Week 2 was skipped!
+    }
+
+    @Test
+    fun testMonthlyIntervalStartingMonth() {
+        val baseCal = Calendar.getInstance().apply {
+            set(Calendar.YEAR, 2026)
+            set(Calendar.MONTH, Calendar.OCTOBER)
+            set(Calendar.DAY_OF_MONTH, 1)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+
+        // Suppose user wants every 2nd month on the 15th, starting in December 2026
+        val startCal = (baseCal.clone() as Calendar).apply {
+            set(Calendar.MONTH, Calendar.DECEMBER)
+        }
+
+        val reminder = Reminder(
+            id = 100,
+            title = "Bimonthly Starting Dec",
+            desc = "",
+            timeInMillis = 0,
+            frequency = "Monthly",
+            monthlyType = "day_of_month",
+            monthlyDay = 15,
+            intervalMonths = 2,
+            startMillis = startCal.timeInMillis
+        )
+
+        // First occurrence
+        val trigger1 = AlarmScheduler.getNextMonthlyMillis(
+            hour = 10,
+            minute = 0,
+            reminder = reminder,
+            fromMillis = baseCal.timeInMillis
+        )
+        val cal1 = Calendar.getInstance().apply { timeInMillis = trigger1 }
+        assertEquals(2026, cal1.get(Calendar.YEAR))
+        assertEquals(Calendar.DECEMBER, cal1.get(Calendar.MONTH))
+        assertEquals(15, cal1.get(Calendar.DAY_OF_MONTH))
+
+        // Second occurrence (after Dec 15 fires)
+        val trigger2 = AlarmScheduler.getNextMonthlyMillis(
+            hour = 10,
+            minute = 0,
+            reminder = reminder,
+            fromMillis = trigger1
+        )
+        val cal2 = Calendar.getInstance().apply { timeInMillis = trigger2 }
+        assertEquals(2027, cal2.get(Calendar.YEAR))
+        assertEquals(Calendar.FEBRUARY, cal2.get(Calendar.MONTH)) // Dec + 2 = Feb! (Jan skipped!)
+        assertEquals(15, cal2.get(Calendar.DAY_OF_MONTH))
+    }
+
+    @Test
+    fun testSelectableDateWeekdays() {
+        // Test that when Sunday is selected, only Sundays from today onwards are selectable
+        val customDays = setOf(Calendar.SUNDAY)
+        val now = Calendar.getInstance()
+        val todayUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+        }
+
+        fun isSelectable(utcMillis: Long): Boolean {
+            if (utcMillis < todayUtc.timeInMillis) return false
+            val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcMillis }
+            return customDays.contains(utcCal.get(Calendar.DAY_OF_WEEK))
+        }
+
+        // Past date is disabled
+        val yesterdayUtc = (todayUtc.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, -1) }
+        assertFalse(isSelectable(yesterdayUtc.timeInMillis))
+
+        // Check the next 14 days
+        for (i in 0..14) {
+            val futureUtc = (todayUtc.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, i) }
+            val dayOfWeek = futureUtc.get(Calendar.DAY_OF_WEEK)
+            if (dayOfWeek == Calendar.SUNDAY) {
+                assertTrue("Sunday should be selectable", isSelectable(futureUtc.timeInMillis))
+            } else {
+                assertFalse("Non-Sunday should be disabled", isSelectable(futureUtc.timeInMillis))
+            }
+        }
+    }
+
+    @Test
+    fun testSelectableDateMonthly() {
+        val now = Calendar.getInstance()
+        val todayUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+        }
+
+        // Test monthly day 20
+        fun isSelectableDay20(utcMillis: Long): Boolean {
+            if (utcMillis < todayUtc.timeInMillis) return false
+            val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = utcMillis }
+            val maxDay = utcCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+            val target = 20.coerceAtMost(maxDay)
+            return utcCal.get(Calendar.DAY_OF_MONTH) == target
+        }
+
+        for (i in 0..60) {
+            val testUtc = (todayUtc.clone() as Calendar).apply { add(Calendar.DAY_OF_MONTH, i) }
+            if (testUtc.get(Calendar.DAY_OF_MONTH) == 20) {
+                assertTrue(isSelectableDay20(testUtc.timeInMillis))
+            } else {
+                assertFalse(isSelectableDay20(testUtc.timeInMillis))
+            }
+        }
     }
 }

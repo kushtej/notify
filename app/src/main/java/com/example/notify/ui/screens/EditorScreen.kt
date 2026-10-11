@@ -1,6 +1,7 @@
 package com.example.notify.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,6 +46,7 @@ import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -54,6 +56,7 @@ import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +76,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -87,7 +91,7 @@ fun EditorScreen(onBack: () -> Unit) {
     var frequency by remember {
         mutableStateOf(
             when (existing?.frequency) {
-                "Weekly", "Daily" -> "Specific Days"
+                "Weekly", "Daily", "Specific Days", "Days of the Week", "Daily / Weekly" -> "Daily / Weekly"
                 null -> "One-Time"
                 else -> existing.frequency
             }
@@ -147,6 +151,29 @@ fun EditorScreen(onBack: () -> Unit) {
         notificationTimes.first().split(":").getOrNull(1)?.toIntOrNull() ?: -1
     } else -1
 
+    var startDateMillis by remember {
+        val initialStart = existing?.let { if (it.startMillis > 0L) it.startMillis else it.timeInMillis }
+            ?: cal.timeInMillis
+        val aligned = if (existing == null) {
+            when (frequency) {
+                "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
+                    if (customDays.isNotEmpty()) {
+                        val c = Calendar.getInstance().apply { timeInMillis = initialStart }
+                        if (!customDays.contains(c.get(Calendar.DAY_OF_WEEK))) {
+                            getFirstValidDateForDays(initialStart, customDays, primaryHour, primaryMinute)
+                        } else initialStart
+                    } else initialStart
+                }
+                "Monthly" -> {
+                    getFirstValidMonthlyDate(initialStart, monthlyType, monthlyDay, monthlyWeekOrdinal, monthlyDayOfWeek, primaryHour, primaryMinute)
+                }
+                else -> initialStart
+            }
+        } else initialStart
+        mutableStateOf(aligned)
+    }
+    var isPickingStartDate by remember { mutableStateOf(false) }
+
     val extraTimes = if (notificationTimes.size > 1) {
         notificationTimes.drop(1)
     } else emptyList()
@@ -157,7 +184,6 @@ fun EditorScreen(onBack: () -> Unit) {
     var expandedFreq by remember { mutableStateOf(false) }
 
     val dateFormatter = remember { SimpleDateFormat("EEEE, MMM dd, yyyy", Locale.getDefault()) }
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateMillis)
 
     Scaffold(
         topBar = {
@@ -178,6 +204,7 @@ fun EditorScreen(onBack: () -> Unit) {
                             frequency = frequency,
                             customDays = customDays,
                             selectedDateMillis = selectedDateMillis,
+                            startDateMillis = startDateMillis,
                             notificationTimes = notificationTimes,
                             intervalDays = 1,
                             intervalWeeks = intervalWeeks,
@@ -282,7 +309,7 @@ fun EditorScreen(onBack: () -> Unit) {
                                 editingTimeIndex = -1
                                 showTimePicker = true
                             },
-                            label = { Text("+ Add Time") },
+                            label = { Text("Add Time") },
                             leadingIcon = {
                                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             }
@@ -308,19 +335,42 @@ fun EditorScreen(onBack: () -> Unit) {
                     DatePickerCard(
                         dateMillis = selectedDateMillis,
                         formatter = dateFormatter,
-                        onClick = { showDatePicker = true },
+                        onClick = {
+                            isPickingStartDate = false
+                            showDatePicker = true
+                        },
                         primaryHour = primaryHour,
                         primaryMinute = primaryMinute,
                         extraTimes = extraTimes
                     )
                 }
 
-                "Daily", "Specific Days" -> {
+                "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
                     DaysScheduleCard(
                         selectedDays = customDays,
-                        onDaysChange = { customDays = it },
+                        onDaysChange = { updated ->
+                            customDays = updated
+                            if (updated.isNotEmpty()) {
+                                val c = Calendar.getInstance().apply { timeInMillis = startDateMillis }
+                                if (!updated.contains(c.get(Calendar.DAY_OF_WEEK))) {
+                                    startDateMillis = getFirstValidDateForDays(startDateMillis, updated, primaryHour, primaryMinute)
+                                }
+                            }
+                        },
                         intervalWeeks = intervalWeeks,
                         onIntervalWeeksChange = { intervalWeeks = it },
+                        startDateMillis = startDateMillis,
+                        onStartDateChange = { startDateMillis = it },
+                        onPickCustomDate = {
+                            if (customDays.isNotEmpty()) {
+                                val c = Calendar.getInstance().apply { timeInMillis = startDateMillis }
+                                if (!customDays.contains(c.get(Calendar.DAY_OF_WEEK))) {
+                                    startDateMillis = getFirstValidDateForDays(startDateMillis, customDays, primaryHour, primaryMinute)
+                                }
+                            }
+                            isPickingStartDate = true
+                            showDatePicker = true
+                        },
                         primaryHour = primaryHour,
                         primaryMinute = primaryMinute,
                         extraTimes = extraTimes
@@ -330,15 +380,34 @@ fun EditorScreen(onBack: () -> Unit) {
                 "Monthly" -> {
                     MonthlyScheduleCard(
                         monthlyType = monthlyType,
-                        onMonthlyTypeChange = { monthlyType = it },
+                        onMonthlyTypeChange = {
+                            monthlyType = it
+                            startDateMillis = getFirstValidMonthlyDate(startDateMillis, it, monthlyDay, monthlyWeekOrdinal, monthlyDayOfWeek, primaryHour, primaryMinute)
+                        },
                         monthlyDay = monthlyDay,
-                        onMonthlyDayChange = { monthlyDay = it },
+                        onMonthlyDayChange = {
+                            monthlyDay = it
+                            startDateMillis = getFirstValidMonthlyDate(startDateMillis, monthlyType, it, monthlyWeekOrdinal, monthlyDayOfWeek, primaryHour, primaryMinute)
+                        },
                         weekOrdinal = monthlyWeekOrdinal,
-                        onWeekOrdinalChange = { monthlyWeekOrdinal = it },
+                        onWeekOrdinalChange = {
+                            monthlyWeekOrdinal = it
+                            startDateMillis = getFirstValidMonthlyDate(startDateMillis, monthlyType, monthlyDay, it, monthlyDayOfWeek, primaryHour, primaryMinute)
+                        },
                         dayOfWeek = monthlyDayOfWeek,
-                        onDayOfWeekChange = { monthlyDayOfWeek = it },
+                        onDayOfWeekChange = {
+                            monthlyDayOfWeek = it
+                            startDateMillis = getFirstValidMonthlyDate(startDateMillis, monthlyType, monthlyDay, monthlyWeekOrdinal, it, primaryHour, primaryMinute)
+                        },
                         intervalMonths = intervalMonths,
                         onIntervalMonthsChange = { intervalMonths = it },
+                        startDateMillis = startDateMillis,
+                        onStartDateChange = { startDateMillis = it },
+                        onPickCustomDate = {
+                            startDateMillis = getFirstValidMonthlyDate(startDateMillis, monthlyType, monthlyDay, monthlyWeekOrdinal, monthlyDayOfWeek, primaryHour, primaryMinute)
+                            isPickingStartDate = true
+                            showDatePicker = true
+                        },
                         primaryHour = primaryHour,
                         primaryMinute = primaryMinute,
                         extraTimes = extraTimes
@@ -350,31 +419,130 @@ fun EditorScreen(onBack: () -> Unit) {
 
     // ── Date picker dialog ─────────────────────────────────────────
     if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    val pickedUtc = datePickerState.selectedDateMillis
-                    if (pickedUtc != null) {
-                        val utcCal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
-                            timeInMillis = pickedUtc
-                        }
-                        val localCal = Calendar.getInstance().apply {
-                            timeInMillis = selectedDateMillis
-                            set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
-                            set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
-                            set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
-                        }
-                        selectedDateMillis = localCal.timeInMillis
-                    }
-                    showDatePicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel") }
+        val initialPickerUtc = remember(isPickingStartDate, showDatePicker) {
+            val base = if (isPickingStartDate) {
+                if (frequency in listOf("Daily / Weekly", "Days of the Week", "Weekly", "Daily", "Specific Days") && customDays.isNotEmpty()) {
+                    getFirstValidDateForDays(startDateMillis, customDays, primaryHour, primaryMinute)
+                } else if (frequency == "Monthly") {
+                    getFirstValidMonthlyDate(startDateMillis, monthlyType, monthlyDay, monthlyWeekOrdinal, monthlyDayOfWeek, primaryHour, primaryMinute)
+                } else {
+                    val now = System.currentTimeMillis()
+                    if (startDateMillis < now) now else startDateMillis
+                }
+            } else {
+                val now = System.currentTimeMillis()
+                if (selectedDateMillis < now) now else selectedDateMillis
             }
+            toUtcMidnight(base)
+        }
+
+        val selectableDates = remember(
+            isPickingStartDate,
+            frequency,
+            customDays,
+            monthlyType,
+            monthlyDay,
+            monthlyWeekOrdinal,
+            monthlyDayOfWeek
         ) {
-            DatePicker(state = datePickerState)
+            object : SelectableDates {
+                override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                    val localNow = Calendar.getInstance()
+                    val todayUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                        clear()
+                        set(localNow.get(Calendar.YEAR), localNow.get(Calendar.MONTH), localNow.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+                    }
+                    // Anything before current date is disabled
+                    if (utcTimeMillis < todayUtc.timeInMillis) return false
+
+                    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                        timeInMillis = utcTimeMillis
+                    }
+
+                    if (isPickingStartDate) {
+                        when (frequency) {
+                            "Daily / Weekly", "Days of the Week", "Weekly", "Daily", "Specific Days" -> {
+                                if (customDays.isNotEmpty()) {
+                                    return customDays.contains(utcCal.get(Calendar.DAY_OF_WEEK))
+                                }
+                            }
+                            "Monthly" -> {
+                                if (monthlyType == "day_of_month") {
+                                    val maxDay = utcCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                                    val target = if (monthlyDay >= Reminder.LAST_DAY_OF_MONTH) maxDay else monthlyDay.coerceAtMost(maxDay)
+                                    return utcCal.get(Calendar.DAY_OF_MONTH) == target
+                                } else {
+                                    if (utcCal.get(Calendar.DAY_OF_WEEK) != monthlyDayOfWeek) return false
+                                    val dayOfMonth = utcCal.get(Calendar.DAY_OF_MONTH)
+                                    val maxDay = utcCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                                    val isLast = (dayOfMonth + 7) > maxDay
+                                    val ord = (dayOfMonth - 1) / 7 + 1
+                                    return if (monthlyWeekOrdinal == Reminder.LAST_WEEK_ORDINAL) isLast else ord == monthlyWeekOrdinal
+                                }
+                            }
+                        }
+                    }
+                    return true
+                }
+
+                override fun isSelectableYear(year: Int): Boolean {
+                    return year >= Calendar.getInstance().get(Calendar.YEAR)
+                }
+            }
+        }
+
+        key(isPickingStartDate, initialPickerUtc) {
+            val datePickerState = rememberDatePickerState(
+                initialSelectedDateMillis = initialPickerUtc,
+                selectableDates = selectableDates
+            )
+
+            DatePickerDialog(
+                onDismissRequest = {
+                    showDatePicker = false
+                    isPickingStartDate = false
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val pickedUtc = datePickerState.selectedDateMillis
+                            if (pickedUtc != null) {
+                                val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+                                    timeInMillis = pickedUtc
+                                }
+                                if (isPickingStartDate) {
+                                    val localCal = Calendar.getInstance().apply {
+                                        timeInMillis = startDateMillis
+                                        set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
+                                        set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
+                                        set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
+                                    }
+                                    startDateMillis = localCal.timeInMillis
+                                } else {
+                                    val localCal = Calendar.getInstance().apply {
+                                        timeInMillis = selectedDateMillis
+                                        set(Calendar.YEAR, utcCal.get(Calendar.YEAR))
+                                        set(Calendar.MONTH, utcCal.get(Calendar.MONTH))
+                                        set(Calendar.DAY_OF_MONTH, utcCal.get(Calendar.DAY_OF_MONTH))
+                                    }
+                                    selectedDateMillis = localCal.timeInMillis
+                                }
+                            }
+                            showDatePicker = false
+                            isPickingStartDate = false
+                        },
+                        enabled = datePickerState.selectedDateMillis != null
+                    ) { Text("OK") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showDatePicker = false
+                        isPickingStartDate = false
+                    }) { Text("Cancel") }
+                }
+            ) {
+                DatePicker(state = datePickerState)
+            }
         }
     }
 
@@ -438,7 +606,7 @@ private fun FrequencyDropdown(
 ) {
     val options = listOf(
         "One-Time",
-        "Specific Days",
+        "Daily / Weekly",
         "Monthly"
     )
 
@@ -472,13 +640,16 @@ private fun FrequencyDropdown(
 // Days Schedule Card (For Daily / Specific Days)
 // ════════════════════════════════════════════════════════════════════
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun DaysScheduleCard(
     selectedDays: Set<Int>,
     onDaysChange: (Set<Int>) -> Unit,
     intervalWeeks: Int,
     onIntervalWeeksChange: (Int) -> Unit,
+    startDateMillis: Long,
+    onStartDateChange: (Long) -> Unit,
+    onPickCustomDate: () -> Unit,
     primaryHour: Int,
     primaryMinute: Int,
     extraTimes: List<String>
@@ -635,6 +806,56 @@ private fun DaysScheduleCard(
                 )
             }
 
+            // Start recurrence from selector (When intervalWeeks > 1)
+            if (intervalWeeks > 1 && selectedDays.isNotEmpty()) {
+                HorizontalDivider()
+
+                Text(
+                    "Start Recurrence From:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Surface(
+                    onClick = onPickCustomDate,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.DateRange,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Start Date",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                SimpleDateFormat("EEEE, MMM d, yyyy", Locale.getDefault()).format(Date(startDateMillis)),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            "Pick Date",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             // Detailed explanation banner
             SchedulePreviewBanner(
                 text = FrequencyFormatter.getDaysScheduleExplanation(
@@ -642,7 +863,8 @@ private fun DaysScheduleCard(
                     intervalWeeks = intervalWeeks,
                     primaryHour = primaryHour,
                     primaryMinute = primaryMinute,
-                    extraTimes = extraTimes
+                    extraTimes = extraTimes,
+                    startDateMillis = startDateMillis
                 )
             )
         }
@@ -653,7 +875,7 @@ private fun DaysScheduleCard(
 // Monthly Schedule Card
 // ════════════════════════════════════════════════════════════════════
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun MonthlyScheduleCard(
     monthlyType: String,
@@ -666,6 +888,9 @@ private fun MonthlyScheduleCard(
     onDayOfWeekChange: (Int) -> Unit,
     intervalMonths: Int,
     onIntervalMonthsChange: (Int) -> Unit,
+    startDateMillis: Long,
+    onStartDateChange: (Long) -> Unit,
+    onPickCustomDate: () -> Unit,
     primaryHour: Int,
     primaryMinute: Int,
     extraTimes: List<String>
@@ -907,6 +1132,56 @@ private fun MonthlyScheduleCard(
                 )
             }
 
+            // Start recurrence from selector (When intervalMonths > 1)
+            if (intervalMonths > 1) {
+                HorizontalDivider()
+
+                Text(
+                    "Start Recurrence From:",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Surface(
+                    onClick = onPickCustomDate,
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.DateRange,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "Start Date",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                SimpleDateFormat("EEEE, MMM d, yyyy", Locale.getDefault()).format(Date(startDateMillis)),
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Text(
+                            "Pick Date",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+
             // Detailed explanation banner
             SchedulePreviewBanner(
                 text = FrequencyFormatter.getMonthlyScheduleExplanation(
@@ -917,7 +1192,8 @@ private fun MonthlyScheduleCard(
                     intervalMonths = intervalMonths,
                     primaryHour = primaryHour,
                     primaryMinute = primaryMinute,
-                    extraTimes = extraTimes
+                    extraTimes = extraTimes,
+                    startDateMillis = startDateMillis
                 )
             )
         }
@@ -1004,6 +1280,82 @@ private fun SchedulePreviewBanner(text: String) {
 // Helpers & Save Logic
 // ════════════════════════════════════════════════════════════════════
 
+private fun getFirstValidDateForDays(baseMillis: Long, days: Set<Int>, primaryH: Int, primaryM: Int): Long {
+    if (days.isEmpty()) return baseMillis
+    val now = Calendar.getInstance()
+    val todayMidnight = Calendar.getInstance().apply {
+        set(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val c = Calendar.getInstance().apply {
+        timeInMillis = if (baseMillis < todayMidnight.timeInMillis) todayMidnight.timeInMillis else baseMillis
+        set(Calendar.HOUR_OF_DAY, if (primaryH >= 0) primaryH else 9)
+        set(Calendar.MINUTE, if (primaryM >= 0) primaryM else 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    for (i in 0..14) {
+        if (days.contains(c.get(Calendar.DAY_OF_WEEK))) {
+            return c.timeInMillis
+        }
+        c.add(Calendar.DAY_OF_MONTH, 1)
+    }
+    return baseMillis
+}
+
+private fun getFirstValidMonthlyDate(
+    baseMillis: Long,
+    monthlyType: String,
+    monthlyDay: Int,
+    weekOrdinal: Int,
+    dayOfWeek: Int,
+    primaryH: Int,
+    primaryM: Int
+): Long {
+    val now = Calendar.getInstance()
+    val todayMidnight = Calendar.getInstance().apply {
+        set(now.get(Calendar.YEAR), now.get(Calendar.MONTH), now.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+    val startCal = Calendar.getInstance().apply {
+        timeInMillis = if (baseMillis < todayMidnight.timeInMillis) todayMidnight.timeInMillis else baseMillis
+    }
+    for (m in 0..12) {
+        val testCal = (startCal.clone() as Calendar).apply {
+            add(Calendar.MONTH, m)
+            set(Calendar.HOUR_OF_DAY, if (primaryH >= 0) primaryH else 9)
+            set(Calendar.MINUTE, if (primaryM >= 0) primaryM else 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val targetMillis = if (monthlyType == "day_of_month") {
+            val maxDay = testCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+            val d = if (monthlyDay >= Reminder.LAST_DAY_OF_MONTH) maxDay else monthlyDay.coerceAtMost(maxDay)
+            testCal.set(Calendar.DAY_OF_MONTH, d)
+            testCal.timeInMillis
+        } else {
+            AlarmScheduler.findNthWeekdayInMonth(
+                testCal, weekOrdinal, dayOfWeek,
+                if (primaryH >= 0) primaryH else 9,
+                if (primaryM >= 0) primaryM else 0
+            )
+        }
+        if (targetMillis >= todayMidnight.timeInMillis) {
+            return targetMillis
+        }
+    }
+    return baseMillis
+}
+
+private fun toUtcMidnight(localMillis: Long): Long {
+    val localCal = Calendar.getInstance().apply { timeInMillis = localMillis }
+    val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set(localCal.get(Calendar.YEAR), localCal.get(Calendar.MONTH), localCal.get(Calendar.DAY_OF_MONTH), 0, 0, 0)
+    }
+    return utcCal.timeInMillis
+}
+
 private fun formatTime(hour: Int, minute: Int): String {
     val amPm = if (hour < 12) "AM" else "PM"
     val h = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
@@ -1026,6 +1378,7 @@ private fun saveReminder(
     frequency: String,
     customDays: Set<Int>,
     selectedDateMillis: Long,
+    startDateMillis: Long,
     notificationTimes: List<String>,
     intervalDays: Int,
     intervalWeeks: Int,
@@ -1059,7 +1412,9 @@ private fun saveReminder(
     }
 
     val actualFrequency = when (frequency) {
-        "Daily" -> if (customDays.size == 7) "Daily" else "Specific Days"
+        "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
+            if (customDays.size == 7 && intervalWeeks == 1) "Daily" else "Weekly"
+        }
         else -> frequency
     }
 
@@ -1077,7 +1432,12 @@ private fun saveReminder(
                 return
             }
             triggerCal.timeInMillis = AlarmScheduler.getNextWeeklyMillis(
-                selectedHour, selectedMinute, customDays, intervalWeeks
+                hour = selectedHour,
+                minute = selectedMinute,
+                allowedDays = customDays,
+                intervalWeeks = intervalWeeks,
+                startMillis = startDateMillis,
+                fromMillis = System.currentTimeMillis() - 60000L
             )
         }
         "Monthly" -> {
@@ -1088,10 +1448,14 @@ private fun saveReminder(
                 monthlyDay = monthlyDay,
                 monthlyWeekOrdinal = monthlyWeekOrdinal,
                 monthlyDayOfWeek = monthlyDayOfWeek,
-                intervalMonths = intervalMonths
+                intervalMonths = intervalMonths,
+                startMillis = startDateMillis
             )
             triggerCal.timeInMillis = AlarmScheduler.getNextMonthlyMillis(
-                selectedHour, selectedMinute, tempReminder
+                hour = selectedHour,
+                minute = selectedMinute,
+                reminder = tempReminder,
+                fromMillis = System.currentTimeMillis() - 60000L
             )
         }
     }
@@ -1115,7 +1479,8 @@ private fun saveReminder(
         monthlyDay = monthlyDay,
         monthlyWeekOrdinal = monthlyWeekOrdinal,
         monthlyDayOfWeek = monthlyDayOfWeek,
-        intervalMonths = intervalMonths
+        intervalMonths = intervalMonths,
+        startMillis = startDateMillis
     )
 
     if (existing != null) {

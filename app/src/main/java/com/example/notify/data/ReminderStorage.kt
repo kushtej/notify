@@ -166,7 +166,7 @@ object ReminderStorage {
         // old "Specific Days" → "Weekly" with intervalWeeks=1
         val rawFreq = obj.optString("frequency", "One-Time")
         val frequency = when (rawFreq) {
-            "Specific Days" -> "Weekly"
+            "Specific Days", "Days of the Week", "Daily / Weekly" -> "Weekly"
             else -> rawFreq
         }
 
@@ -186,7 +186,8 @@ object ReminderStorage {
             monthlyWeekOrdinal = obj.optInt("monthlyWeekOrdinal", 1),
             monthlyDayOfWeek = obj.optInt("monthlyDayOfWeek", 2),
             intervalMonths = obj.optInt("intervalMonths", 1),
-            extraTimes = extraTimesList
+            extraTimes = extraTimesList,
+            startMillis = obj.optLong("startMillis", 0L)
         )
     }
 
@@ -205,6 +206,7 @@ object ReminderStorage {
         put("monthlyWeekOrdinal", r.monthlyWeekOrdinal)
         put("monthlyDayOfWeek", r.monthlyDayOfWeek)
         put("intervalMonths", r.intervalMonths)
+        put("startMillis", r.startMillis)
 
         val daysArr = JSONArray()
         r.customDays.forEach { daysArr.put(it) }

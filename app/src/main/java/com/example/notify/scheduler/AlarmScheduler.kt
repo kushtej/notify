@@ -43,16 +43,20 @@ object AlarmScheduler {
                 // If this extra time is before now, advance it the same way as the primary
                 if (extraCal.timeInMillis <= System.currentTimeMillis()) {
                     when (reminder.frequency) {
-                        "Daily", "Specific Days", "Weekly" -> {
+                        "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
+                            val startAnchor = if (reminder.startMillis > 0L) reminder.startMillis else reminder.timeInMillis
                             if (reminder.customDays.isNotEmpty()) {
-                                val next = getNextWeeklyMillis(h, m, reminder.customDays.toSet(), reminder.intervalWeeks)
+                                val next = getNextWeeklyMillis(
+                                    h, m, reminder.customDays.toSet(), reminder.intervalWeeks,
+                                    startMillis = startAnchor, fromMillis = System.currentTimeMillis()
+                                )
                                 extraCal.timeInMillis = next
                             } else {
                                 extraCal.add(Calendar.DAY_OF_YEAR, if (reminder.intervalDays > 1) reminder.intervalDays else 1)
                             }
                         }
                         "Monthly" -> {
-                            val next = getNextMonthlyMillis(h, m, reminder)
+                            val next = getNextMonthlyMillis(h, m, reminder, fromMillis = System.currentTimeMillis())
                             extraCal.timeInMillis = next
                             extraCal.set(Calendar.HOUR_OF_DAY, h)
                             extraCal.set(Calendar.MINUTE, m)
@@ -109,18 +113,26 @@ object AlarmScheduler {
         }
         val hour = currentCal.get(Calendar.HOUR_OF_DAY)
         val minute = currentCal.get(Calendar.MINUTE)
+        val startAnchor = if (reminder.startMillis > 0L) reminder.startMillis else reminder.timeInMillis
 
         return when (reminder.frequency) {
-            "Daily", "Specific Days", "Weekly" -> {
+            "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
                 if (reminder.customDays.isNotEmpty()) {
-                    getNextWeeklyMillis(hour, minute, reminder.customDays.toSet(), reminder.intervalWeeks)
+                    getNextWeeklyMillis(
+                        hour = hour,
+                        minute = minute,
+                        allowedDays = reminder.customDays.toSet(),
+                        intervalWeeks = reminder.intervalWeeks,
+                        startMillis = startAnchor,
+                        fromMillis = reminder.timeInMillis
+                    )
                 } else if (reminder.intervalDays > 1) {
                     getNextDailyMillis(hour, minute, reminder.intervalDays)
                 } else {
                     getNextDailyMillis(hour, minute, 1)
                 }
             }
-            "Monthly" -> getNextMonthlyMillis(hour, minute, reminder)
+            "Monthly" -> getNextMonthlyMillis(hour, minute, reminder, fromMillis = reminder.timeInMillis)
             else -> reminder.timeInMillis
         }
     }
@@ -128,40 +140,76 @@ object AlarmScheduler {
     // ── Next-trigger calculations ──────────────────────────────────────
 
     /**
-     * Calculates the next trigger time for a Weekly reminder.
+     * Returns a Calendar pointing to Monday 00:00:00.000 of the week containing [millis].
+     * In ISO / standard calendar weeks, Monday is the first day of the week.
      */
-    fun getNextWeeklyMillis(hour: Int, minute: Int, allowedDays: Set<Int>, intervalWeeks: Int = 1): Long {
+    fun getStartOfWeek(millis: Long): Calendar {
         val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour)
-            set(Calendar.MINUTE, minute)
+            timeInMillis = millis
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
             set(Calendar.MILLISECOND, 0)
         }
+        val dow = cal.get(Calendar.DAY_OF_WEEK)
+        val daysSinceMonday = if (dow == Calendar.SUNDAY) 6 else dow - Calendar.MONDAY
+        cal.add(Calendar.DAY_OF_MONTH, -daysSinceMonday)
+        return cal
+    }
 
-        // First, try to find a matching day in the current week
-        for (i in 0..6) {
-            if (i > 0) cal.add(Calendar.DAY_OF_YEAR, 1)
-            if (allowedDays.contains(cal.get(Calendar.DAY_OF_WEEK))) {
-                if (cal.timeInMillis > System.currentTimeMillis()) return cal.timeInMillis
+    /**
+     * Calculates the next trigger time for a Weekly reminder.
+     *
+     * @param hour Target hour (0-23)
+     * @param minute Target minute (0-59)
+     * @param allowedDays Set of [Calendar.DAY_OF_WEEK] values (e.g. Calendar.MONDAY)
+     * @param intervalWeeks Recurrence interval (1 = every week, 2 = every other week, etc.)
+     * @param startMillis Anchor start date timestamp. Active cycle weeks are aligned to this.
+     * @param fromMillis Look for occurrences strictly after this time (defaults to now).
+     */
+    fun getNextWeeklyMillis(
+        hour: Int,
+        minute: Int,
+        allowedDays: Set<Int>,
+        intervalWeeks: Int = 1,
+        startMillis: Long = 0L,
+        fromMillis: Long = System.currentTimeMillis()
+    ): Long {
+        if (allowedDays.isEmpty()) return fromMillis
+
+        val effectiveStart = if (startMillis > 0L) startMillis else fromMillis
+        val startWeek = getStartOfWeek(effectiveStart)
+        val fromWeek = getStartOfWeek(fromMillis)
+
+        val diffMillis = fromWeek.timeInMillis - startWeek.timeInMillis
+        val diffWeeks = (diffMillis / (7L * 24 * 3600 * 1000)).toInt()
+
+        val cycleWeeks = if (intervalWeeks > 1) intervalWeeks else 1
+        val startK = if (diffWeeks > 0) diffWeeks / cycleWeeks else 0
+
+        for (k in startK..(startK + 104)) {
+            val activeMonday = (startWeek.clone() as Calendar).apply {
+                add(Calendar.WEEK_OF_YEAR, k * cycleWeeks)
             }
-        }
 
-        // If intervalWeeks > 1, jump ahead by (intervalWeeks - 1) more weeks
-        if (intervalWeeks > 1) {
-            cal.add(Calendar.WEEK_OF_YEAR, intervalWeeks - 1)
-            // Reset to start of that week and scan again
-            cal.set(Calendar.DAY_OF_WEEK, cal.firstDayOfWeek)
-            cal.set(Calendar.HOUR_OF_DAY, hour)
-            cal.set(Calendar.MINUTE, minute)
-            for (i in 0..6) {
-                if (i > 0) cal.add(Calendar.DAY_OF_YEAR, 1)
-                if (allowedDays.contains(cal.get(Calendar.DAY_OF_WEEK))) {
-                    return cal.timeInMillis
+            for (dayOffset in 0..6) {
+                val candidateCal = (activeMonday.clone() as Calendar).apply {
+                    add(Calendar.DAY_OF_MONTH, dayOffset)
+                    set(Calendar.HOUR_OF_DAY, hour)
+                    set(Calendar.MINUTE, minute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+
+                if (allowedDays.contains(candidateCal.get(Calendar.DAY_OF_WEEK))) {
+                    if (candidateCal.timeInMillis > fromMillis && candidateCal.timeInMillis >= effectiveStart) {
+                        return candidateCal.timeInMillis
+                    }
                 }
             }
         }
 
-        return cal.timeInMillis
+        return fromMillis + (cycleWeeks * 7L * 24 * 3600 * 1000)
     }
 
     /**
@@ -184,15 +232,23 @@ object AlarmScheduler {
     /**
      * Calculates the next trigger time for a Monthly reminder.
      */
-    fun getNextMonthlyMillis(hour: Int, minute: Int, reminder: Reminder): Long {
+    fun getNextMonthlyMillis(
+        hour: Int,
+        minute: Int,
+        reminder: Reminder,
+        fromMillis: Long = System.currentTimeMillis()
+    ): Long {
+        val effectiveStart = if (reminder.startMillis > 0L) reminder.startMillis else fromMillis
         return if (reminder.monthlyType == "day_of_month") {
-            getNextMonthlyDayMillis(hour, minute, reminder.monthlyDay, reminder.intervalMonths)
+            getNextMonthlyDayMillis(hour, minute, reminder.monthlyDay, reminder.intervalMonths, effectiveStart, fromMillis)
         } else {
             getNextMonthlyWeekdayMillis(
                 hour, minute,
                 reminder.monthlyWeekOrdinal,
                 reminder.monthlyDayOfWeek,
-                reminder.intervalMonths
+                reminder.intervalMonths,
+                effectiveStart,
+                fromMillis
             )
         }
     }
@@ -200,7 +256,26 @@ object AlarmScheduler {
     /**
      * Next trigger for "on day N of the month" (or last day if N=32).
      */
-    private fun getNextMonthlyDayMillis(hour: Int, minute: Int, dayOfMonth: Int, intervalMonths: Int): Long {
+    private fun getNextMonthlyDayMillis(
+        hour: Int,
+        minute: Int,
+        dayOfMonth: Int,
+        intervalMonths: Int,
+        startMillis: Long,
+        fromMillis: Long
+    ): Long {
+        val startCal = Calendar.getInstance().apply { timeInMillis = startMillis }
+        val fromCal = Calendar.getInstance().apply { timeInMillis = fromMillis }
+
+        val startYear = startCal.get(Calendar.YEAR)
+        val startMonth = startCal.get(Calendar.MONTH)
+        val fromYear = fromCal.get(Calendar.YEAR)
+        val fromMonth = fromCal.get(Calendar.MONTH)
+
+        val diffMonths = (fromYear - startYear) * 12 + (fromMonth - startMonth)
+        val cycle = if (intervalMonths > 1) intervalMonths else 1
+        val startM = if (diffMonths > 0) diffMonths / cycle else 0
+
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
@@ -208,30 +283,49 @@ object AlarmScheduler {
             set(Calendar.MILLISECOND, 0)
         }
 
-        // Try current month first, then advance
-        for (attempt in 0..24) {
-            if (attempt > 0) cal.add(Calendar.MONTH, if (attempt == 1) 1 else intervalMonths - 1)
+        for (m in startM..(startM + 48)) {
+            cal.set(Calendar.YEAR, startYear)
+            cal.set(Calendar.MONTH, startMonth + m * cycle)
 
             val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
             val targetDay = if (dayOfMonth >= Reminder.LAST_DAY_OF_MONTH) {
                 maxDay
             } else {
-                dayOfMonth.coerceAtMost(maxDay) // e.g. 31 → 30 in April
+                dayOfMonth.coerceAtMost(maxDay)
             }
             cal.set(Calendar.DAY_OF_MONTH, targetDay)
 
-            if (cal.timeInMillis > System.currentTimeMillis()) return cal.timeInMillis
+            if (cal.timeInMillis > fromMillis && cal.timeInMillis >= startMillis) {
+                return cal.timeInMillis
+            }
         }
-        return cal.timeInMillis
+        return fromMillis + (cycle.toLong() * 30L * 24 * 3600 * 1000)
     }
 
     /**
      * Next trigger for "on the Nth weekday of the month" (e.g. 2nd Tuesday, Last Friday).
      */
     private fun getNextMonthlyWeekdayMillis(
-        hour: Int, minute: Int,
-        weekOrdinal: Int, dayOfWeek: Int, intervalMonths: Int
+        hour: Int,
+        minute: Int,
+        weekOrdinal: Int,
+        dayOfWeek: Int,
+        intervalMonths: Int,
+        startMillis: Long,
+        fromMillis: Long
     ): Long {
+        val startCal = Calendar.getInstance().apply { timeInMillis = startMillis }
+        val fromCal = Calendar.getInstance().apply { timeInMillis = fromMillis }
+
+        val startYear = startCal.get(Calendar.YEAR)
+        val startMonth = startCal.get(Calendar.MONTH)
+        val fromYear = fromCal.get(Calendar.YEAR)
+        val fromMonth = fromCal.get(Calendar.MONTH)
+
+        val diffMonths = (fromYear - startYear) * 12 + (fromMonth - startMonth)
+        val cycle = if (intervalMonths > 1) intervalMonths else 1
+        val startM = if (diffMonths > 0) diffMonths / cycle else 0
+
         val cal = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, hour)
             set(Calendar.MINUTE, minute)
@@ -239,20 +333,23 @@ object AlarmScheduler {
             set(Calendar.MILLISECOND, 0)
         }
 
-        for (attempt in 0..24) {
-            if (attempt > 0) cal.add(Calendar.MONTH, if (attempt == 1) 1 else intervalMonths - 1)
+        for (m in startM..(startM + 48)) {
+            cal.set(Calendar.YEAR, startYear)
+            cal.set(Calendar.MONTH, startMonth + m * cycle)
 
             val targetMillis = findNthWeekdayInMonth(cal, weekOrdinal, dayOfWeek, hour, minute)
-            if (targetMillis > System.currentTimeMillis()) return targetMillis
+            if (targetMillis > fromMillis && targetMillis >= startMillis) {
+                return targetMillis
+            }
         }
-        return cal.timeInMillis
+        return fromMillis + (cycle.toLong() * 30L * 24 * 3600 * 1000)
     }
 
     /**
      * Finds the Nth occurrence of a weekday in the month of [cal].
      * [ordinal] 1-4 = 1st through 4th, 5 = last occurrence.
      */
-    private fun findNthWeekdayInMonth(
+    fun findNthWeekdayInMonth(
         cal: Calendar, ordinal: Int, dayOfWeek: Int,
         hour: Int, minute: Int
     ): Long {

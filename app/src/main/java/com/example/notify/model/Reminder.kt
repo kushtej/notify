@@ -42,7 +42,10 @@ data class Reminder(
     val intervalMonths: Int = 1,               // repeat every N months
 
     // Multiple times per day: additional "HH:mm" strings
-    val extraTimes: List<String> = emptyList()
+    val extraTimes: List<String> = emptyList(),
+
+    // Start anchor timestamp for multi-week and multi-month recurrence cycles
+    val startMillis: Long = 0L
 ) {
     companion object {
         /** Sentinel value for [monthlyDay] meaning "last day of the month". */

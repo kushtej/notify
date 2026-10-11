@@ -227,17 +227,25 @@ class AlarmReceiver : BroadcastReceiver() {
      * on a recurring reminder, taking frequency rules into account.
      */
     private fun calculateNextExtraTime(reminder: Reminder, hour: Int, minute: Int): Long {
+        val startAnchor = if (reminder.startMillis > 0L) reminder.startMillis else reminder.timeInMillis
         return when (reminder.frequency) {
-            "Daily", "Specific Days", "Weekly" -> {
+            "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
                 if (reminder.customDays.isNotEmpty()) {
-                    AlarmScheduler.getNextWeeklyMillis(hour, minute, reminder.customDays.toSet(), reminder.intervalWeeks)
+                    AlarmScheduler.getNextWeeklyMillis(
+                        hour = hour,
+                        minute = minute,
+                        allowedDays = reminder.customDays.toSet(),
+                        intervalWeeks = reminder.intervalWeeks,
+                        startMillis = startAnchor,
+                        fromMillis = System.currentTimeMillis()
+                    )
                 } else if (reminder.intervalDays > 1) {
                     AlarmScheduler.getNextDailyMillis(hour, minute, reminder.intervalDays)
                 } else {
                     AlarmScheduler.getNextDailyMillis(hour, minute, 1)
                 }
             }
-            "Monthly" -> AlarmScheduler.getNextMonthlyMillis(hour, minute, reminder)
+            "Monthly" -> AlarmScheduler.getNextMonthlyMillis(hour, minute, reminder, fromMillis = System.currentTimeMillis())
             else -> {
                 val cal = Calendar.getInstance().apply {
                     set(Calendar.HOUR_OF_DAY, hour)

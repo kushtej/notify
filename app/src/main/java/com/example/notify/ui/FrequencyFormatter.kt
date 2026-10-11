@@ -65,7 +65,7 @@ object FrequencyFormatter {
         return when (reminder.frequency) {
             "One-Time" -> "One-Time"
 
-            "Daily", "Specific Days", "Weekly" -> {
+            "Daily", "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
                 val daysSet = reminder.customDays.toSet()
                 val intervalWeeks = reminder.intervalWeeks
                 val weekCycle = formatWeekCycle(intervalWeeks)
@@ -162,7 +162,8 @@ object FrequencyFormatter {
         intervalWeeks: Int,
         primaryHour: Int,
         primaryMinute: Int,
-        extraTimes: List<String>
+        extraTimes: List<String>,
+        startDateMillis: Long? = null
     ): String {
         val timesDesc = formatTimesDescription(primaryHour, primaryMinute, extraTimes)
 
@@ -176,7 +177,7 @@ object FrequencyFormatter {
 
         val weekCycleSentence = formatWeekCycleSentence(intervalWeeks)
 
-        return when {
+        val baseMsg = when {
             selectedDays.containsAll(ALL_7_DAYS) -> {
                 if (intervalWeeks <= 1) "Notification will trigger every day $timesDesc."
                 else "Notification will trigger $weekCycleSentence across all days $timesDesc."
@@ -207,6 +208,13 @@ object FrequencyFormatter {
                 "Notification will trigger $weekCycleSentence on $formattedDays $timesDesc."
             }
         }
+
+        return if (startDateMillis != null && intervalWeeks > 1) {
+            val startPrefix = formatStartWeekPrefix(startDateMillis)
+            baseMsg.removeSuffix(".") + ", $startPrefix."
+        } else {
+            baseMsg
+        }
     }
 
     fun getMonthlyScheduleExplanation(
@@ -217,7 +225,8 @@ object FrequencyFormatter {
         intervalMonths: Int,
         primaryHour: Int,
         primaryMinute: Int,
-        extraTimes: List<String>
+        extraTimes: List<String>,
+        startDateMillis: Long? = null
     ): String {
         val timesDesc = formatTimesDescription(primaryHour, primaryMinute, extraTimes)
 
@@ -227,7 +236,7 @@ object FrequencyFormatter {
 
         val cycle = formatMonthCycleSentence(intervalMonths)
 
-        return if (monthlyType == "day_of_month") {
+        val baseMsg = if (monthlyType == "day_of_month") {
             if (monthlyDay == Reminder.LAST_DAY_OF_MONTH) {
                 if (intervalMonths == 12) {
                     "Notification will trigger once a year on the last day of the month $timesDesc."
@@ -261,6 +270,40 @@ object FrequencyFormatter {
             } else {
                 "Notification will trigger on the $ord $dayName of $cycle $timesDesc."
             }
+        }
+
+        return if (startDateMillis != null && intervalMonths > 1) {
+            val startPrefix = formatStartMonthPrefix(startDateMillis)
+            baseMsg.removeSuffix(".") + ", $startPrefix."
+        } else {
+            baseMsg
+        }
+    }
+
+    private fun formatStartWeekPrefix(startDateMillis: Long): String {
+        val startWeek = com.example.notify.scheduler.AlarmScheduler.getStartOfWeek(startDateMillis)
+        val currentWeek = com.example.notify.scheduler.AlarmScheduler.getStartOfWeek(System.currentTimeMillis())
+        val diffWeeks = ((startWeek.timeInMillis - currentWeek.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+        val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(startDateMillis))
+        return when {
+            diffWeeks <= 0 -> "starting this week ($dateStr)"
+            diffWeeks == 1 -> "starting next week ($dateStr)"
+            diffWeeks == 2 -> "starting the week after next ($dateStr)"
+            else -> "starting $dateStr"
+        }
+    }
+
+    private fun formatStartMonthPrefix(startDateMillis: Long): String {
+        val startCal = Calendar.getInstance().apply { timeInMillis = startDateMillis }
+        val nowCal = Calendar.getInstance()
+        val diffMonths = (startCal.get(Calendar.YEAR) - nowCal.get(Calendar.YEAR)) * 12 + (startCal.get(Calendar.MONTH) - nowCal.get(Calendar.MONTH))
+        val monthStr = SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(startDateMillis))
+        val dateStr = SimpleDateFormat("EEEE, MMMM d, yyyy", Locale.getDefault()).format(Date(startDateMillis))
+        return when {
+            diffMonths <= 0 -> "starting this month in $monthStr ($dateStr)"
+            diffMonths == 1 -> "starting next month in $monthStr ($dateStr)"
+            diffMonths == 2 -> "starting in 2 months in $monthStr ($dateStr)"
+            else -> "starting in $monthStr ($dateStr)"
         }
     }
 

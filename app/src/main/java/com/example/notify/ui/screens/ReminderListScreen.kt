@@ -120,7 +120,7 @@ fun ReminderListScreen(
     val upcoming1hItems = remember(list, nowMillis) { list.filter { triggersWithinOneHour(it, nowMillis) } }
     val allRecurringItems = remember(list) { list.filter { it.frequency != "One-Time" } }
     val weeklyItems = remember(list) {
-        list.filter { it.frequency in listOf("Weekly", "Specific Days") || (it.frequency == "Daily" && it.customDays.isNotEmpty()) }
+        list.filter { it.frequency in listOf("Weekly", "Specific Days", "Daily / Weekly", "Days of the Week") || (it.frequency == "Daily" && it.customDays.isNotEmpty()) }
     }
     val monthlyItems = remember(list) { list.filter { it.frequency == "Monthly" } }
     val upcomingOneTimeItems = remember(list, nowMillis) { list.filter { isUpcomingOneTime(it, nowCal) } }
@@ -711,12 +711,30 @@ internal fun triggersOnDate(reminder: Reminder, cal: Calendar): Boolean {
                 rCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)
         }
         "Daily" -> true
-        "Specific Days", "Weekly" -> {
+        "Specific Days", "Weekly", "Daily / Weekly", "Days of the Week" -> {
             if (reminder.customDays.isEmpty()) true
-            else reminder.customDays.contains(dayOfWeek)
+            else if (!reminder.customDays.contains(dayOfWeek)) false
+            else {
+                if (reminder.intervalWeeks > 1 && reminder.startMillis > 0L) {
+                    val startW = com.example.notify.scheduler.AlarmScheduler.getStartOfWeek(reminder.startMillis)
+                    val calW = com.example.notify.scheduler.AlarmScheduler.getStartOfWeek(cal.timeInMillis)
+                    val diffWeeks = ((calW.timeInMillis - startW.timeInMillis) / (7L * 24 * 3600 * 1000)).toInt()
+                    diffWeeks >= 0 && (diffWeeks % reminder.intervalWeeks == 0)
+                } else {
+                    true
+                }
+            }
         }
         "Monthly" -> {
-            if (reminder.monthlyType == "day_of_month") {
+            val inMonthCycle = if (reminder.intervalMonths > 1 && reminder.startMillis > 0L) {
+                val startCal = Calendar.getInstance().apply { timeInMillis = reminder.startMillis }
+                val diffMonths = (cal.get(Calendar.YEAR) - startCal.get(Calendar.YEAR)) * 12 + (cal.get(Calendar.MONTH) - startCal.get(Calendar.MONTH))
+                diffMonths >= 0 && (diffMonths % reminder.intervalMonths == 0)
+            } else {
+                true
+            }
+            if (!inMonthCycle) false
+            else if (reminder.monthlyType == "day_of_month") {
                 val lastDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
                 if (reminder.monthlyDay == Reminder.LAST_DAY_OF_MONTH) {
                     dayOfMonth == lastDay
