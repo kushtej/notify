@@ -1,6 +1,7 @@
 package com.example.notify.data
 
 import android.content.Context
+import com.example.notify.model.FilterConfig
 import com.example.notify.model.Reminder
 import com.example.notify.scheduler.AlarmScheduler
 import org.json.JSONArray
@@ -16,9 +17,50 @@ object ReminderStorage {
     private const val KEY_SNOOZE = "global_snooze"
     private const val KEY_THEME = "app_theme"
     private const val KEY_AUTO_CLEAR = "auto_clear_hours"
+    private const val KEY_FILTERS = "dashboard_filter_chips"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // --- Filter Configuration ---
+
+    fun getFilterConfigs(context: Context): List<FilterConfig> {
+        val jsonStr = prefs(context).getString(KEY_FILTERS, null) ?: return FilterConfig.DEFAULT_FILTERS
+        return try {
+            val array = JSONArray(jsonStr)
+            val list = mutableListOf<FilterConfig>()
+            val defaultMap = FilterConfig.DEFAULT_FILTERS.associateBy { it.id }
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val id = obj.getString("id")
+                val enabled = obj.optBoolean("enabled", true)
+                val defaultCfg = defaultMap[id]
+                if (defaultCfg != null) {
+                    list.add(defaultCfg.copy(enabled = enabled))
+                }
+            }
+            FilterConfig.DEFAULT_FILTERS.forEach { def ->
+                if (list.none { it.id == def.id }) {
+                    list.add(def)
+                }
+            }
+            list
+        } catch (e: Exception) {
+            FilterConfig.DEFAULT_FILTERS
+        }
+    }
+
+    fun setFilterConfigs(context: Context, configs: List<FilterConfig>) {
+        val array = JSONArray()
+        configs.forEach {
+            val obj = JSONObject().apply {
+                put("id", it.id)
+                put("enabled", it.enabled)
+            }
+            array.put(obj)
+        }
+        prefs(context).edit().putString(KEY_FILTERS, array.toString()).apply()
+    }
 
     // --- Snooze Duration ---
 
@@ -57,6 +99,18 @@ object ReminderStorage {
             list.add(fromJson(array.getJSONObject(i)))
         }
         return list.sortedBy { it.timeInMillis }
+    }
+
+    /**
+     * Generates a safe, non-overflowing positive integer ID for a new reminder.
+     */
+    fun generateNextId(context: Context): Int {
+        val existing = getAllReminders(context).map { it.id }.toSet()
+        var candidate = 1
+        while (existing.contains(candidate)) {
+            candidate++
+        }
+        return candidate
     }
 
     fun saveReminder(context: Context, reminder: Reminder) {

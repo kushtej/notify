@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,10 +53,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.notify.data.ReminderStorage
 import com.example.notify.model.Reminder
+import com.example.notify.ui.AppState
 import com.example.notify.ui.FrequencyFormatter
 import com.example.notify.ui.richtext.RichTextFormatter
 import java.text.SimpleDateFormat
@@ -80,10 +84,11 @@ fun ReminderListScreen(
     onDelete: (Int) -> Unit = {},
     onClearAll: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     var showClearConfirm by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf("all") } // all, today, repeating, upcoming
+    var selectedFilter by remember { mutableStateOf("all") }
 
     // Section collapse states
     var expandedToday by remember { mutableStateOf(true) }
@@ -92,12 +97,34 @@ fun ReminderListScreen(
     var expandedYesterday by remember { mutableStateOf(true) }
     var expandedEarlier by remember { mutableStateOf(true) }
 
-    // Precalculate time categories for Active screen
-    val nowCal = remember(list) { Calendar.getInstance() }
-    val todayItems = remember(list) { list.filter { triggersToday(it, nowCal) } }
+    // User-configured filter chips
+    val filterConfigs = remember(list, AppState.forceRefresh) {
+        ReminderStorage.getFilterConfigs(context)
+    }
+    val activeFilterConfigs = remember(filterConfigs) {
+        filterConfigs.filter { it.enabled }
+    }
+
+    // Reset selected filter to "all" if current choice is no longer enabled
+    LaunchedEffect(activeFilterConfigs) {
+        if (selectedFilter != "all" && activeFilterConfigs.none { it.id == selectedFilter }) {
+            selectedFilter = "all"
+        }
+    }
+
+    // Time calculations
+    val nowMillis = System.currentTimeMillis()
+    val nowCal = remember(list, nowMillis) { Calendar.getInstance().apply { timeInMillis = nowMillis } }
+
+    val todayItems = remember(list, nowMillis) { list.filter { triggersOnDate(it, nowCal) } }
+    val upcoming1hItems = remember(list, nowMillis) { list.filter { triggersWithinOneHour(it, nowMillis) } }
     val allRecurringItems = remember(list) { list.filter { it.frequency != "One-Time" } }
-    val upcomingItems = remember(list) { list.filter { isUpcomingOneTime(it, nowCal) } }
-    val otherRecurringItems = remember(list) { allRecurringItems.filter { !triggersToday(it, nowCal) } }
+    val weeklyItems = remember(list) {
+        list.filter { it.frequency in listOf("Weekly", "Specific Days") || (it.frequency == "Daily" && it.customDays.isNotEmpty()) }
+    }
+    val monthlyItems = remember(list) { list.filter { it.frequency == "Monthly" } }
+    val upcomingOneTimeItems = remember(list, nowMillis) { list.filter { isUpcomingOneTime(it, nowCal) } }
+    val otherRecurringItems = remember(list, nowMillis) { allRecurringItems.filter { !triggersOnDate(it, nowCal) } }
 
     Scaffold(
         topBar = {
@@ -190,8 +217,8 @@ fun ReminderListScreen(
                     .fillMaxSize()
                     .padding(padding)
             ) {
-                // Quick Filter Chips (Only on Active Reminders when not searching)
-                if (title == "Active Reminders" && !isSearchActive) {
+                // Quick Filter Chips: Only show if Active screen, not searching, AND user has at least one filter enabled
+                if (title == "Active Reminders" && !isSearchActive && activeFilterConfigs.isNotEmpty()) {
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -204,25 +231,19 @@ fun ReminderListScreen(
                                 label = { Text("All (${list.size})") }
                             )
                         }
-                        item {
+                        items(activeFilterConfigs, key = { it.id }) { cfg ->
+                            val count = when (cfg.id) {
+                                "today" -> todayItems.size
+                                "upcoming" -> upcoming1hItems.size
+                                "repeating" -> allRecurringItems.size
+                                "weekly" -> weeklyItems.size
+                                "monthly" -> monthlyItems.size
+                                else -> 0
+                            }
                             FilterChip(
-                                selected = selectedFilter == "today",
-                                onClick = { selectedFilter = "today" },
-                                label = { Text("Today (${todayItems.size})") }
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = selectedFilter == "repeating",
-                                onClick = { selectedFilter = "repeating" },
-                                label = { Text("Repeating (${allRecurringItems.size})") }
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = selectedFilter == "upcoming",
-                                onClick = { selectedFilter = "upcoming" },
-                                label = { Text("Upcoming (${upcomingItems.size})") }
+                                selected = selectedFilter == cfg.id,
+                                onClick = { selectedFilter = cfg.id },
+                                label = { Text("${cfg.label} ($count)") }
                             )
                         }
                     }
@@ -265,14 +286,7 @@ fun ReminderListScreen(
                         when (selectedFilter) {
                             "today" -> {
                                 if (todayItems.isEmpty()) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("No notifications scheduled for today.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
+                                    item { EmptyStateMessage("No notifications scheduled for today.") }
                                 } else {
                                     items(todayItems, key = { it.id }) { reminder ->
                                         ReminderCard(
@@ -287,16 +301,26 @@ fun ReminderListScreen(
                                 }
                             }
 
+                            "upcoming" -> {
+                                if (upcoming1hItems.isEmpty()) {
+                                    item { EmptyStateMessage("No notifications scheduled within the next 1 hour.") }
+                                } else {
+                                    items(upcoming1hItems, key = { it.id }) { reminder ->
+                                        ReminderCard(
+                                            reminder = reminder,
+                                            showEdit = showEdit,
+                                            showDelete = showDelete,
+                                            onView = onView,
+                                            onEdit = onEdit,
+                                            onDelete = onDelete
+                                        )
+                                    }
+                                }
+                            }
+
                             "repeating" -> {
                                 if (allRecurringItems.isEmpty()) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("No repeating notifications configured.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
+                                    item { EmptyStateMessage("No repeating notifications configured.") }
                                 } else {
                                     items(allRecurringItems, key = { it.id }) { reminder ->
                                         ReminderCard(
@@ -311,18 +335,28 @@ fun ReminderListScreen(
                                 }
                             }
 
-                            "upcoming" -> {
-                                if (upcomingItems.isEmpty()) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("No upcoming one-time notifications.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    }
+                            "weekly" -> {
+                                if (weeklyItems.isEmpty()) {
+                                    item { EmptyStateMessage("No weekly notifications configured.") }
                                 } else {
-                                    items(upcomingItems, key = { it.id }) { reminder ->
+                                    items(weeklyItems, key = { it.id }) { reminder ->
+                                        ReminderCard(
+                                            reminder = reminder,
+                                            showEdit = showEdit,
+                                            showDelete = showDelete,
+                                            onView = onView,
+                                            onEdit = onEdit,
+                                            onDelete = onDelete
+                                        )
+                                    }
+                                }
+                            }
+
+                            "monthly" -> {
+                                if (monthlyItems.isEmpty()) {
+                                    item { EmptyStateMessage("No monthly notifications configured.") }
+                                } else {
+                                    items(monthlyItems, key = { it.id }) { reminder ->
                                         ReminderCard(
                                             reminder = reminder,
                                             showEdit = showEdit,
@@ -360,18 +394,18 @@ fun ReminderListScreen(
                                     }
                                 }
 
-                                if (upcomingItems.isNotEmpty()) {
+                                if (upcomingOneTimeItems.isNotEmpty()) {
                                     item {
                                         Spacer(modifier = Modifier.height(4.dp))
                                         SectionHeader(
                                             title = "Upcoming One-Time",
-                                            count = upcomingItems.size,
+                                            count = upcomingOneTimeItems.size,
                                             isExpanded = expandedUpcoming,
                                             onToggle = { expandedUpcoming = !expandedUpcoming }
                                         )
                                     }
                                     if (expandedUpcoming) {
-                                        items(upcomingItems, key = { it.id }) { reminder ->
+                                        items(upcomingOneTimeItems, key = { it.id }) { reminder ->
                                             ReminderCard(
                                                 reminder = reminder,
                                                 showEdit = showEdit,
@@ -509,6 +543,16 @@ fun ReminderListScreen(
             onConfirm = { onClearAll(); showClearConfirm = false },
             onDismiss = { showClearConfirm = false }
         )
+    }
+}
+
+@Composable
+private fun EmptyStateMessage(message: String) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -656,35 +700,34 @@ private fun ClearAllConfirmDialog(
 
 // ── Time categorization helpers ──────────────────────────────────────
 
-internal fun triggersToday(reminder: Reminder, nowCal: Calendar): Boolean {
-    val todayYear = nowCal.get(Calendar.YEAR)
-    val todayDayOfYear = nowCal.get(Calendar.DAY_OF_YEAR)
-    val todayDayOfWeek = nowCal.get(Calendar.DAY_OF_WEEK)
-    val todayDayOfMonth = nowCal.get(Calendar.DAY_OF_MONTH)
+internal fun triggersOnDate(reminder: Reminder, cal: Calendar): Boolean {
+    val dayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
+    val dayOfMonth = cal.get(Calendar.DAY_OF_MONTH)
 
     return when (reminder.frequency) {
         "One-Time" -> {
             val rCal = Calendar.getInstance().apply { timeInMillis = reminder.timeInMillis }
-            rCal.get(Calendar.YEAR) == todayYear && rCal.get(Calendar.DAY_OF_YEAR) == todayDayOfYear
+            rCal.get(Calendar.YEAR) == cal.get(Calendar.YEAR) &&
+                rCal.get(Calendar.DAY_OF_YEAR) == cal.get(Calendar.DAY_OF_YEAR)
         }
         "Daily" -> true
         "Specific Days", "Weekly" -> {
             if (reminder.customDays.isEmpty()) true
-            else reminder.customDays.contains(todayDayOfWeek)
+            else reminder.customDays.contains(dayOfWeek)
         }
         "Monthly" -> {
             if (reminder.monthlyType == "day_of_month") {
-                val lastDay = nowCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                val lastDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
                 if (reminder.monthlyDay == Reminder.LAST_DAY_OF_MONTH) {
-                    todayDayOfMonth == lastDay
+                    dayOfMonth == lastDay
                 } else {
-                    todayDayOfMonth == reminder.monthlyDay
+                    dayOfMonth == reminder.monthlyDay
                 }
             } else {
-                if (todayDayOfWeek != reminder.monthlyDayOfWeek) false
+                if (dayOfWeek != reminder.monthlyDayOfWeek) false
                 else {
-                    val currentOrdinal = (todayDayOfMonth - 1) / 7 + 1
-                    val isLast = (todayDayOfMonth + 7) > nowCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+                    val currentOrdinal = (dayOfMonth - 1) / 7 + 1
+                    val isLast = (dayOfMonth + 7) > cal.getActualMaximum(Calendar.DAY_OF_MONTH)
                     if (reminder.monthlyWeekOrdinal == Reminder.LAST_WEEK_ORDINAL) isLast
                     else currentOrdinal == reminder.monthlyWeekOrdinal
                 }
@@ -692,6 +735,50 @@ internal fun triggersToday(reminder: Reminder, nowCal: Calendar): Boolean {
         }
         else -> false
     }
+}
+
+internal fun triggersWithinOneHour(reminder: Reminder, nowMillis: Long = System.currentTimeMillis()): Boolean {
+    val windowEnd = nowMillis + 3600_000L
+
+    if (reminder.frequency == "One-Time") {
+        return reminder.timeInMillis in (nowMillis + 1)..windowEnd
+    }
+
+    val allTimes = mutableListOf<Pair<Int, Int>>()
+    val primaryCal = Calendar.getInstance().apply { timeInMillis = reminder.timeInMillis }
+    allTimes.add(primaryCal.get(Calendar.HOUR_OF_DAY) to primaryCal.get(Calendar.MINUTE))
+
+    reminder.extraTimes.forEach { extra ->
+        val parts = extra.split(":")
+        if (parts.size == 2) {
+            val h = parts[0].toIntOrNull()
+            val m = parts[1].toIntOrNull()
+            if (h != null && m != null) {
+                allTimes.add(h to m)
+            }
+        }
+    }
+
+    val todayCal = Calendar.getInstance().apply { timeInMillis = nowMillis }
+    val tomorrowCal = (todayCal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+
+    for (dayCal in listOf(todayCal, tomorrowCal)) {
+        if (triggersOnDate(reminder, dayCal)) {
+            for ((h, m) in allTimes) {
+                val triggerCal = (dayCal.clone() as Calendar).apply {
+                    set(Calendar.HOUR_OF_DAY, h)
+                    set(Calendar.MINUTE, m)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                if (triggerCal.timeInMillis in (nowMillis + 1)..windowEnd) {
+                    return true
+                }
+            }
+        }
+    }
+
+    return false
 }
 
 internal fun isUpcomingOneTime(reminder: Reminder, nowCal: Calendar): Boolean {

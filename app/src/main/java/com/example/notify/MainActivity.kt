@@ -1,10 +1,16 @@
 package com.example.notify
 
 import android.Manifest
+import android.app.AlarmManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +26,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.example.notify.data.ReminderStorage
+import com.example.notify.scheduler.AlarmScheduler
 import com.example.notify.ui.AppState
 import com.example.notify.ui.NotifyApp
 
@@ -34,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ensureNotificationChannel()
         requestNotificationPermissionIfNeeded()
         handleNotificationIntent(intent)
 
@@ -71,8 +79,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var hasPromptedExactAlarm = false
+
     override fun onResume() {
         super.onResume()
+        ensureExactAlarmPermission()
+        AlarmScheduler.rescheduleAll(this)
         ReminderStorage.pruneOldCompleted(this)
         AppState.forceRefresh += 1
     }
@@ -84,6 +96,53 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         handleNotificationIntent(intent)
+    }
+
+    /**
+     * Creates the notification channel eagerly on startup so it's always
+     * available before the first alarm fires.
+     */
+    private fun ensureNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                "notify_channel",
+                "Notifications",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alarm reminders"
+                enableVibration(true)
+                enableLights(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * On Android 12+ (API 31), exact alarms require user permission.
+     * If not granted, open the system settings page to let the user enable it.
+     */
+    private fun ensureExactAlarmPermission() {
+        if (hasPromptedExactAlarm) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            if (!alarmManager.canScheduleExactAlarms()) {
+                hasPromptedExactAlarm = true
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    try {
+                        startActivity(Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM))
+                    } catch (e2: Exception) {
+                        e2.printStackTrace()
+                    }
+                }
+            }
+        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {

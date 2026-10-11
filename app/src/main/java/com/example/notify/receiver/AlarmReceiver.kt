@@ -7,8 +7,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.example.notify.MainActivity
+import com.example.notify.R
 import com.example.notify.data.ReminderStorage
 import com.example.notify.model.Reminder
 import com.example.notify.scheduler.AlarmScheduler
@@ -17,6 +19,9 @@ import java.util.Calendar
 
 /**
  * Receives alarm broadcasts and handles firing notifications and snoozing.
+ *
+ * Uses [goAsync] + a partial wake lock to ensure the notification is posted
+ * even when the device is in deep Doze mode.
  */
 class AlarmReceiver : BroadcastReceiver() {
 
@@ -32,9 +37,19 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        when (intent.action) {
-            ACTION_SNOOZE -> handleSnooze(context, intent)
-            ACTION_FIRE -> handleFire(context, intent)
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "notify:alarm_receiver")
+        wl.acquire(10_000L) // 10 second max to be safe
+
+        val pendingResult = goAsync()
+        try {
+            when (intent.action) {
+                ACTION_SNOOZE -> handleSnooze(context, intent)
+                ACTION_FIRE -> handleFire(context, intent)
+            }
+        } finally {
+            pendingResult.finish()
+            if (wl.isHeld) wl.release()
         }
     }
 
@@ -49,7 +64,7 @@ class AlarmReceiver : BroadcastReceiver() {
         val snoozeMillis = System.currentTimeMillis() + (snoozeMins * 60 * 1000)
 
         val snoozedReminder = Reminder(
-            id = System.currentTimeMillis().toInt(),
+            id = ReminderStorage.generateNextId(context),
             title = title,
             desc = desc,
             timeInMillis = snoozeMillis,
@@ -65,18 +80,35 @@ class AlarmReceiver : BroadcastReceiver() {
 
     private fun handleFire(context: Context, intent: Intent) {
         val id = intent.getIntExtra(EXTRA_ID, 0)
+        val timeIndex = intent.getIntExtra(EXTRA_TIME_INDEX, 0)
+        val title = intent.getStringExtra(EXTRA_TITLE) ?: "Reminder"
+        val desc = intent.getStringExtra(EXTRA_DESC) ?: ""
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        val reminder = ReminderStorage.getAllReminders(context).find { it.id == id } ?: return
+
+        // Find existing reminder or fall back to intent data so the notification ALWAYS fires
+        val reminder = ReminderStorage.getAllReminders(context).find { it.id == id }
+            ?: Reminder(
+                id = id,
+                title = title,
+                desc = desc,
+                timeInMillis = System.currentTimeMillis(),
+                frequency = "One-Time"
+            )
 
         ensureNotificationChannel(manager)
         showNotification(context, manager, reminder)
-        updateReminderState(context, reminder)
+        updateReminderState(context, reminder, timeIndex)
         AppState.forceRefresh += 1
     }
 
     private fun ensureNotificationChannel(manager: NotificationManager) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH)
+            val channel = NotificationChannel(CHANNEL_ID, CHANNEL_NAME, NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Alarm reminders"
+                enableVibration(true)
+                enableLights(true)
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+            }
             manager.createNotificationChannel(channel)
         }
     }
@@ -102,10 +134,15 @@ class AlarmReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val iconRes = R.drawable.ic_launcher_foreground
+
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(iconRes)
             .setContentTitle(reminder.title)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setAutoCancel(true)
             .setContentIntent(openAppPendingIntent)
             .addAction(0, "Snooze", snoozePendingIntent)
@@ -125,7 +162,10 @@ class AlarmReceiver : BroadcastReceiver() {
         manager.notify(reminder.id, notification)
     }
 
-    private fun updateReminderState(context: Context, reminder: Reminder) {
+    /**
+     * After an alarm fires, handles state updates and rescheduling.
+     */
+    private fun updateReminderState(context: Context, reminder: Reminder, timeIndex: Int) {
         val keepHistory = ReminderStorage.getAutoClearHours(context) > 0
 
         if (reminder.isSnoozed) {
@@ -133,7 +173,7 @@ class AlarmReceiver : BroadcastReceiver() {
             if (keepHistory) {
                 ReminderStorage.saveReminder(
                     context,
-                    reminder.copy(id = System.currentTimeMillis().toInt(), isCompleted = true, isSnoozed = false)
+                    reminder.copy(id = ReminderStorage.generateNextId(context), isCompleted = true, isSnoozed = false)
                 )
             }
         } else if (reminder.frequency == "One-Time") {
@@ -143,20 +183,71 @@ class AlarmReceiver : BroadcastReceiver() {
                 ReminderStorage.deleteReminder(context, reminder.id)
             }
         } else {
+            // Recurring reminder — log a completed copy for history
             if (keepHistory) {
                 ReminderStorage.saveReminder(
                     context,
-                    reminder.copy(id = System.currentTimeMillis().toInt(), isCompleted = true)
+                    reminder.copy(id = ReminderStorage.generateNextId(context), isCompleted = true)
                 )
             }
-            scheduleNextRecurrence(context, reminder)
+            // Reschedule only the specific sub-alarm that just fired
+            rescheduleSubAlarm(context, reminder, timeIndex)
         }
     }
 
-    private fun scheduleNextRecurrence(context: Context, reminder: Reminder) {
-        val nextTime = AlarmScheduler.calculateNextOccurrence(reminder)
-        val updatedReminder = reminder.copy(timeInMillis = nextTime)
-        ReminderStorage.saveReminder(context, updatedReminder)
-        AlarmScheduler.schedule(context, updatedReminder)
+    /**
+     * Reschedules only the single sub-alarm identified by [timeIndex]
+     * to its next future occurrence, without touching any other sub-alarms
+     * belonging to the same reminder.
+     */
+    private fun rescheduleSubAlarm(context: Context, reminder: Reminder, timeIndex: Int) {
+        if (timeIndex == 0) {
+            // Primary alarm: advance timeInMillis to the next occurrence
+            val nextTime = AlarmScheduler.calculateNextOccurrence(reminder)
+            val updatedReminder = reminder.copy(timeInMillis = nextTime)
+            ReminderStorage.saveReminder(context, updatedReminder)
+            AlarmScheduler.scheduleOneAlarm(context, updatedReminder, 0, nextTime)
+        } else {
+            // Extra-time alarm: calculate the next occurrence for this specific time
+            val extraIndex = timeIndex - 1
+            if (extraIndex < reminder.extraTimes.size) {
+                val timeParts = reminder.extraTimes[extraIndex].split(":")
+                if (timeParts.size == 2) {
+                    val h = timeParts[0].toIntOrNull() ?: return
+                    val m = timeParts[1].toIntOrNull() ?: return
+                    val nextMillis = calculateNextExtraTime(reminder, h, m)
+                    AlarmScheduler.scheduleOneAlarm(context, reminder, timeIndex, nextMillis)
+                }
+            }
+        }
+    }
+
+    /**
+     * Calculates the next future trigger time for a specific hour:minute
+     * on a recurring reminder, taking frequency rules into account.
+     */
+    private fun calculateNextExtraTime(reminder: Reminder, hour: Int, minute: Int): Long {
+        return when (reminder.frequency) {
+            "Daily", "Specific Days", "Weekly" -> {
+                if (reminder.customDays.isNotEmpty()) {
+                    AlarmScheduler.getNextWeeklyMillis(hour, minute, reminder.customDays.toSet(), reminder.intervalWeeks)
+                } else if (reminder.intervalDays > 1) {
+                    AlarmScheduler.getNextDailyMillis(hour, minute, reminder.intervalDays)
+                } else {
+                    AlarmScheduler.getNextDailyMillis(hour, minute, 1)
+                }
+            }
+            "Monthly" -> AlarmScheduler.getNextMonthlyMillis(hour, minute, reminder)
+            else -> {
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.HOUR_OF_DAY, hour)
+                    set(Calendar.MINUTE, minute)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+                cal.timeInMillis
+            }
+        }
     }
 }
