@@ -332,37 +332,37 @@ class FrequencyTest {
     }
 
     @Test
-    fun testTriggersToday() {
+    fun testTriggersOnDate() {
         val testCal = Calendar.getInstance().apply {
             set(Calendar.YEAR, 2026)
             set(Calendar.MONTH, Calendar.OCTOBER)
             set(Calendar.DAY_OF_MONTH, 10)
         }
 
-        // Daily reminder always triggers today
+        // Daily reminder always triggers on any date
         val daily = Reminder(id = 1, title = "Daily", desc = "", timeInMillis = 0, frequency = "Daily")
-        assertTrue(com.example.notify.ui.screens.triggersToday(daily, testCal))
+        assertTrue(com.example.notify.ui.screens.triggersOnDate(daily, testCal))
 
         // Weekly reminder with Saturday triggers on Saturday Oct 10, 2026 (Oct 10, 2026 is a Saturday!)
         val weeklySat = Reminder(
             id = 2, title = "Weekly Sat", desc = "", timeInMillis = 0,
             frequency = "Weekly", customDays = listOf(Calendar.SATURDAY)
         )
-        assertTrue(com.example.notify.ui.screens.triggersToday(weeklySat, testCal))
+        assertTrue(com.example.notify.ui.screens.triggersOnDate(weeklySat, testCal))
 
         // Weekly reminder with Monday does not trigger on Saturday
         val weeklyMon = Reminder(
             id = 3, title = "Weekly Mon", desc = "", timeInMillis = 0,
             frequency = "Weekly", customDays = listOf(Calendar.MONDAY)
         )
-        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersToday(weeklyMon, testCal))
+        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersOnDate(weeklyMon, testCal))
 
         // One-time for today
         val oneTimeToday = Reminder(
             id = 4, title = "One Time Today", desc = "",
             timeInMillis = testCal.timeInMillis, frequency = "One-Time"
         )
-        assertTrue(com.example.notify.ui.screens.triggersToday(oneTimeToday, testCal))
+        assertTrue(com.example.notify.ui.screens.triggersOnDate(oneTimeToday, testCal))
 
         // One-time for tomorrow
         val futureCal = (testCal.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 2) }
@@ -370,7 +370,33 @@ class FrequencyTest {
             id = 5, title = "One Time Future", desc = "",
             timeInMillis = futureCal.timeInMillis, frequency = "One-Time"
         )
-        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersToday(oneTimeFuture, testCal))
+        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersOnDate(oneTimeFuture, testCal))
         assertTrue(com.example.notify.ui.screens.isUpcomingOneTime(oneTimeFuture, testCal))
+    }
+
+    @Test
+    fun testTriggersWithinOneHour() {
+        val now = 1000000000000L
+
+        // Triggering in 30 minutes (1800000 ms) -> within 1 hour
+        val in30Mins = Reminder(
+            id = 10, title = "Soon", desc = "",
+            timeInMillis = now + 1800000L, frequency = "One-Time"
+        )
+        assertTrue(com.example.notify.ui.screens.triggersWithinOneHour(in30Mins, now))
+
+        // Triggering in 2 hours (7200000 ms) -> NOT within 1 hour
+        val in2Hours = Reminder(
+            id = 11, title = "Later", desc = "",
+            timeInMillis = now + 7200000L, frequency = "One-Time"
+        )
+        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersWithinOneHour(in2Hours, now))
+
+        // Triggering in the past -> NOT within 1 hour
+        val inPast = Reminder(
+            id = 12, title = "Past", desc = "",
+            timeInMillis = now - 5000L, frequency = "One-Time"
+        )
+        org.junit.Assert.assertFalse(com.example.notify.ui.screens.triggersWithinOneHour(inPast, now))
     }
 }

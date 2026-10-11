@@ -16,23 +16,6 @@ class BootReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
-
-        val reminders = ReminderStorage.getAllReminders(context)
-        val now = System.currentTimeMillis()
-
-        for (reminder in reminders) {
-            if (reminder.isCompleted) continue
-
-            if (reminder.timeInMillis > now) {
-                // Still in the future, re-schedule
-                AlarmScheduler.schedule(context, reminder)
-            } else if (reminder.frequency != "One-Time") {
-                // Recurring alarm that passed while device was turned off; advance to next future occurrence
-                val nextTime = AlarmScheduler.calculateNextOccurrence(reminder)
-                val updatedReminder = reminder.copy(timeInMillis = nextTime)
-                ReminderStorage.saveReminder(context, updatedReminder)
-                AlarmScheduler.schedule(context, updatedReminder)
-            }
-        }
+        AlarmScheduler.rescheduleAll(context)
     }
 }
